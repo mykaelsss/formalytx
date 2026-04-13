@@ -1,13 +1,8 @@
 from fastapi import FastAPI
+from app.sessions.routes import router as session_router
+from app.schedule.routes import router as schedule_router
 
 app = FastAPI()
 
-
-@app.get("/")
-def read_root():
-    return {"Hello": "World"}
-
-
-@app.get("/items/{item_id}")
-def read_item(item_id: int, q: str | None = None):
-    return {"item_id": item_id, "q": q}
+app.include_router(schedule_router, prefix='/schedule')
+app.include_router(session_router, prefix='/sessions')
