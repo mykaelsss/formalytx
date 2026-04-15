@@ -1,5 +1,5 @@
 import fastf1
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def get_schedule(year: int):
@@ -36,6 +36,17 @@ def get_round(year: int, round: int):
     }
 
 
+SESSION_NAME_TO_IDENTIFIER = {
+    "Practice 1": "FP1",
+    "Practice 2": "FP2",
+    "Practice 3": "FP3",
+    "Qualifying": "Q",
+    "Sprint": "S",
+    "Sprint Qualifying": "SQ",
+    "Race": "R",
+}
+
+
 def _get_sessions(event):
     sessions = []
     for i in range(1, 6):
@@ -44,7 +55,8 @@ def _get_sessions(event):
         if not name or str(name).strip() == "":
             continue
         sessions.append({
-            "identifier": name,
+            "name": name,
+            "identifier": SESSION_NAME_TO_IDENTIFIER.get(name, name),
             "date": str(date.date()) if hasattr(date, "date") else str(date),
             "status": _event_status(date),
         })
@@ -72,6 +84,8 @@ def _check_data_availability(year: int, round: int, identifier: str):
 def _event_status(date):
     if date is None:
         return "unknown"
-    now = datetime.now()
-    event_date = date if isinstance(date, datetime) else datetime.combine(date, datetime.min.time())
+    now = datetime.now(timezone.utc)
+    event_date = date if isinstance(date, datetime) else datetime.combine(date, datetime.min.time(), tzinfo=timezone.utc)
+    if event_date.tzinfo is None:
+        event_date = event_date.replace(tzinfo=timezone.utc)
     return "upcoming" if event_date > now else "completed"
