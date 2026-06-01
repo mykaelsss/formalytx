@@ -10,18 +10,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Driver,
-  RoundSchedule,
-  Schedule,
-  Team,
-} from "@/lib/types";
-import axios from "axios";
+import { useCallback, useMemo } from "react";
+import { Driver, Team } from "@/lib/types";
 import { Skeleton } from "../ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useSchedule } from "@/lib/hooks/useSchedule";
 import { useRoundSchedule } from "@/lib/hooks/useRoundSchedule";
+import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
+import { lapTimeToMs } from "@/lib/format";
 
 const YEARS = Array.from({ length: new Date().getFullYear() - 2017 }, (_, i) =>
   String(new Date().getFullYear() - i),
@@ -84,6 +80,33 @@ export default function SessionSidebar({
     const params = new URLSearchParams(searchParams.toString());
     params.delete("drivers");
     router.replace(pathname + "?" + params.toString(), { scroll: false });
+  };
+
+  const lapQueries = useSessionLaps(year, round, session, selectedDrivers);
+  const driverLaps = lapQueries.flatMap((q) => q.data ?? []);
+  const isLoadingLaps = lapQueries.some((q) => q.isLoading);
+
+  const compareFastestLaps = () => {
+    const entries: string[] = [];
+    for (const code of selectedDrivers) {
+      const dl = driverLaps.find((d) => d.abbreviation === code);
+      if (!dl) continue;
+      let bestNum: number | null = null;
+      let bestMs = Infinity;
+      for (const lap of dl.laps) {
+        const ms = lapTimeToMs(lap.lap_time);
+        if (ms !== null && lap.lap_number !== null && ms < bestMs) {
+          bestMs = ms;
+          bestNum = lap.lap_number;
+        }
+      }
+      if (bestNum !== null) entries.push(`${code}:${bestNum}`);
+    }
+    if (!entries.length) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("laps", entries.join("|"));
+    params.set("tab", "telemetry");
+    router.push(pathname + "?" + params.toString());
   };
 
   return (
@@ -228,8 +251,12 @@ export default function SessionSidebar({
             })}
       </div>
       <div className="flex flex-col gap-2 pt-3">
-        <button className="cursor-pointer w-full py-2 text-xs font-bold uppercase tracking-widest bg-surface-card hover:bg-surface-card-hover text-text-secondary transition-colors rounded-md">
-          Compare fastest laps
+        <button
+          onClick={compareFastestLaps}
+          disabled={selectedDrivers.length === 0 || isLoadingLaps}
+          className="cursor-pointer w-full py-2 text-xs font-bold uppercase tracking-widest bg-surface-card hover:bg-surface-card-hover text-text-secondary transition-colors rounded-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-card"
+        >
+          {isLoadingLaps ? "Loading laps…" : "Compare fastest laps"}
         </button>
         <button
           className="cursor-pointer w-full py-2 text-xs font-bold uppercase tracking-widest bg-surface-card hover:bg-surface-card-hover text-text-secondary transition-colors rounded-md"

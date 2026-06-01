@@ -7,13 +7,7 @@ import { cn } from "@/lib/utils";
 import { getCompoundColor } from "@/lib/compounds";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
 import { toggleLap, parseSelectedLaps } from "@/lib/selectedLaps";
-
-function lapTimeToMs(lapTime: string | null): number | null {
-  if (!lapTime) return null;
-  const [min, sec] = lapTime.split(":");
-  if (!min || !sec) return null;
-  return parseInt(min) * 60000 + parseFloat(sec) * 1000;
-}
+import { lapTimeToMs } from "@/lib/format";
 
 function formatDelta(ms: number): string {
   return `+${(ms / 1000).toFixed(3)}`;

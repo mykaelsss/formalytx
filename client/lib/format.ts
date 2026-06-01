@@ -31,6 +31,13 @@ export function getCornerLabel(corners: Corner[], dist: number): string {
 
 
 
+export function lapTimeToMs(lapTime: string | null): number | null {
+  if (!lapTime) return null;
+  const [min, sec] = lapTime.split(":");
+  if (!min || !sec) return null;
+  return parseInt(min) * 60000 + parseFloat(sec) * 1000;
+}
+
 export function formatLapTime(seconds: number | null): string {
   if (seconds === null) return "—";
   const totalMs = Math.round(seconds * 1000);

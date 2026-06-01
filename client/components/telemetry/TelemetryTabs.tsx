@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "motion/react";
 import SessionViewer from "./SessionViewer";
 import TelemetryViewer from "./TelemetryViewer";
@@ -37,6 +37,15 @@ export default function TelemetryTabs({ activeTab }: TelemetryTabsProps) {
   const [visitedTabs, setVisitedTabs] = useState<Set<string>>(
     new Set([activeTab]),
   );
+
+  // activeTab can change via URL navigation (e.g. "Compare fastest laps")
+  // without going through handleTabChange, so mark it visited here too —
+  // otherwise the target tab's content never mounts until a refresh.
+  useEffect(() => {
+    setVisitedTabs((prev) =>
+      prev.has(activeTab) ? prev : new Set(prev).add(activeTab),
+    );
+  }, [activeTab]);
   const [isSharing, setIsSharing] = useState(false);
 
   const { data: sessionData, isFetching: isLoadingSession } = useSession(
