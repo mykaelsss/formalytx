@@ -14,6 +14,7 @@ export function useLapTelemetry(
   round: string,
   session: string,
   selectedLaps: Map<string, number[]>,
+  enabled: boolean = true,
 ): {
   data: LapTelemetry[];
   isPending: boolean;
@@ -44,7 +45,7 @@ export function useLapTelemetry(
     queries: entries.map(({ driver, lap }) => ({
       queryKey: ["lapTelemetry", year, round, session, driver, lap],
       queryFn: () => fetchLapTelemetry(year, round, session, `${driver}:${lap}`),
-      enabled: !!year && !!round && !!session,
+      enabled: enabled && !!year && !!round && !!session,
     })),
     combine,
   });

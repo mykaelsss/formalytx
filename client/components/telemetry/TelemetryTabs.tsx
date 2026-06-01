@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import SessionViewer from "./SessionViewer";
 import TelemetryViewer from "./TelemetryViewer";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { parseSelectedLaps } from "@/lib/selectedLaps";
+import { useLapTelemetry } from "@/lib/hooks/useLapTelemetry";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Button } from "../ui/button";
 import { Share } from "lucide-react";
@@ -33,9 +35,28 @@ export default function TelemetryTabs({ activeTab }: TelemetryTabsProps) {
   const year = searchParams.get("year") ?? "";
   const round = searchParams.get("round") ?? "";
   const session = searchParams.get("session") ?? "";
+  const laps = searchParams.get("laps") ?? "";
 
   const [visitedTabs, setVisitedTabs] = useState<Set<string>>(
     new Set([activeTab]),
+  );
+
+  // Prefetch telemetry the moment the user changes the lap selection — even
+  // while still on the session tab — so it's ready when they open telemetry.
+  // But a fresh load of a shared link (laps already in the URL, no interaction)
+  // shouldn't fetch until they actually open the tab, so gate on engagement:
+  // either the selection changed since mount, or telemetry has been visited.
+  const initialLaps = useRef(laps);
+  const [hasInteracted, setHasInteracted] = useState(false);
+  if (!hasInteracted && laps !== initialLaps.current) setHasInteracted(true);
+
+  const selectedLaps = useMemo(() => parseSelectedLaps(laps), [laps]);
+  useLapTelemetry(
+    year,
+    round,
+    session,
+    selectedLaps,
+    hasInteracted || visitedTabs.has("telemetry"),
   );
 
   // activeTab can change via URL navigation (e.g. "Compare fastest laps")
