@@ -14,7 +14,12 @@ export function useLapTelemetry(
   round: string,
   session: string,
   selectedLaps: Map<string, number[]>,
-): { data: LapTelemetry[]; isPending: boolean; failed: FailedLap[] } {
+): {
+  data: LapTelemetry[];
+  isPending: boolean;
+  failed: FailedLap[];
+  pending: { driver: string; lap: number }[];
+} {
   const entries = useMemo(
     () =>
       Array.from(selectedLaps.entries()).flatMap(([driver, laps]) =>
@@ -30,6 +35,7 @@ export function useLapTelemetry(
       failed: entries
         .map((entry, i) => ({ ...entry, refetch: results[i]!.refetch }))
         .filter((_, i) => results[i]?.isError),
+      pending: entries.filter((_, i) => results[i]?.isPending),
     }),
     [entries],
   );

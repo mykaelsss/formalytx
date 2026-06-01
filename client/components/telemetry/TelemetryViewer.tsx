@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import { lapAddedToast } from "@/lib/toasts";
 import { parseSelectedLaps, toggleLap } from "@/lib/selectedLaps";
 import { seriesKey } from "@/lib/seriesKey";
-import { allocateColorSlots } from "@/lib/colors";
+import { allocateColorSlots, lapColor } from "@/lib/colors";
 import { useTelemetrySeries } from "@/lib/hooks/useTelemetrySeries";
 import TelemetrySettingsPanel from "./TelemetrySettingsPanel";
 import ColorSwatch from "../ui/ColorSwatch";
@@ -122,7 +122,7 @@ export default function TelemetryViewer() {
   }
 
   const { data: circuitData } = useCircuitInfo(year, round);
-  const {data: telemetryData, isPending, failed} = useLapTelemetry(year, round, session, selectedLaps);
+  const {data: telemetryData, isPending, failed, pending} = useLapTelemetry(year, round, session, selectedLaps);
 
   const shownToastsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -356,6 +356,20 @@ export default function TelemetryViewer() {
     });
   }, [customColors, chartRef]);
 
+  // Laps still fetching that aren't yet drawn — surfaced in the legend with a
+  // spinner so the user sees a pending lap appear immediately on selection.
+  const loadedKeys = useMemo(
+    () => new Set(legendItems.map((i) => i.key)),
+    [legendItems],
+  );
+  const pendingItems = useMemo(
+    () =>
+      pending
+        .map(({ driver, lap }) => ({ key: seriesKey(driver, lap), driver, lap }))
+        .filter((p) => !loadedKeys.has(p.key)),
+    [pending, loadedKeys],
+  );
+
   const totalHeight = CHANNELS.length * (GRID_HEIGHT + GRID_GAP) + GRID_GAP;
 
   const chartAriaLabel =
@@ -413,6 +427,34 @@ export default function TelemetryViewer() {
                       >
                         <X size={12} aria-hidden="true" />
                       </button>
+                    </div>
+                  );
+                })}
+                {pendingItems.map((item) => {
+                  const color =
+                    customColors[item.key] ??
+                    lapColor(colorSlots[item.key] ?? 0);
+                  return (
+                    <div
+                      key={item.key}
+                      role="status"
+                      aria-live="polite"
+                      className="flex items-center gap-2 rounded-full border border-surface-border bg-surface-card py-1 pl-2 pr-3"
+                      style={{ opacity: 0.6 }}
+                    >
+                      <span
+                        className="size-3 rounded-full"
+                        style={{ backgroundColor: color }}
+                        aria-hidden="true"
+                      />
+                      <span className="text-xs text-text-muted">
+                        {item.driver} Lap {item.lap}
+                      </span>
+                      <Loader2
+                        className="animate-spin text-text-muted"
+                        size={12}
+                        aria-label={`Loading ${item.driver} Lap ${item.lap}`}
+                      />
                     </div>
                   );
                 })}
