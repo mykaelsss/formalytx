@@ -62,23 +62,11 @@ function VisuallyHiddenInput<T = InputValue>(
       return;
     }
 
-    setControlSize({
-      width: control.offsetWidth,
-      height: control.offsetHeight,
-    });
-
-    if (typeof window === "undefined") return;
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      if (!Array.isArray(entries) || !entries.length) return;
-
-      const entry = entries[0];
-      if (!entry) return;
-
+    const measure = (entry?: ResizeObserverEntry) => {
       let width: number;
       let height: number;
 
-      if ("borderBoxSize" in entry) {
+      if (entry && "borderBoxSize" in entry) {
         const borderSizeEntry = entry.borderBoxSize;
         const borderSize = Array.isArray(borderSizeEntry)
           ? borderSizeEntry[0]
@@ -91,6 +79,19 @@ function VisuallyHiddenInput<T = InputValue>(
       }
 
       setControlSize({ width, height });
+    };
+
+    measure();
+
+    if (typeof window === "undefined") return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (!Array.isArray(entries) || !entries.length) return;
+
+      const entry = entries[0];
+      if (!entry) return;
+
+      measure(entry);
     });
 
     resizeObserver.observe(control, { box: "border-box" });
