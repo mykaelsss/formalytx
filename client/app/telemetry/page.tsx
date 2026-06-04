@@ -1,6 +1,13 @@
+import { Suspense } from "react";
+import type { Metadata } from "next";
 import TelemetryTabs from "@/components/telemetry/TelemetryTabs";
 
-export default async function TelemetryPage({ 
+export const metadata: Metadata = {
+  title: "Telemetry",
+  description: "Compare lap times and car telemetry across drivers and sessions.",
+};
+
+export default async function TelemetryPage({
   searchParams
 }: {
   searchParams: Promise<{ tab?: string; year?: string; round?: string; session?: string }>
@@ -11,7 +18,9 @@ export default async function TelemetryPage({
 
   return (
     <main>
-      <TelemetryTabs activeTab={tab} />
+      <Suspense>
+        <TelemetryTabs activeTab={tab} />
+      </Suspense>
     </main>
   )
 }

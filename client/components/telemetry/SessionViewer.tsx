@@ -11,7 +11,7 @@ import {
 } from "react";
 import LapTable from "./LapTable";
 import SessionSidebar from "./SessionSidebar";
-import { motion } from "motion/react";
+import { m } from "motion/react";
 import { Driver, DriverLaps, Team, TelemetrySession } from "@/lib/types";
 import axios from "axios";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -81,7 +81,7 @@ export default function SessionViewer() {
       "border border-surface-border bg-surface-base flex flex-col lg:flex-row items-start min-h-120 py-8 px-4 rounded-xs",
       sidebarOpen ? "gap-4" : "max-lg:gap-4"
       )}>
-      <motion.div
+      <m.div
         animate={{
           width: sidebarOpen ? 208 : 0,
           opacity: sidebarOpen ? 1 : 0,
@@ -93,9 +93,10 @@ export default function SessionViewer() {
         )}
       >
         <SessionSidebar loadingSession={isLoadingSession} teams={teams} />
-      </motion.div>
+      </m.div>
       <div className="flex-1 w-full flex flex-col min-w-0 gap-4 overflow-hidden">
         <button
+          type="button"
           onClick={() => setSidebarOpen((o) => !o)}
           className="self-start text-text-muted hover:text-text-primary transition-colors text-xs hidden lg:inline cursor-pointer"
         >

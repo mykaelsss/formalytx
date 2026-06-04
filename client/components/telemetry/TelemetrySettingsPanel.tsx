@@ -2,7 +2,7 @@
 
 import { Settings } from "lucide-react";
 import { useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { m, AnimatePresence } from "motion/react";
 import type { PointSymbol, TelemetryChannelSettings } from "@/lib/types";
 import { defaultTelemetryChannelSettings, defaultTelemetrySettings } from "@/lib/utils";
 import { setTelemetrySettings, useTelemetrySettings } from "@/lib/hooks/useTelemetrySettings";
@@ -136,8 +136,8 @@ export default function TelemetrySettingsPanel() {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button className="shrink-0">
-          <Settings className="h-4.5 w-4.5 text-text-muted hover:text-text-primary transition-colors cursor-pointer" />
+        <button type="button" className="shrink-0">
+          <Settings className="size-4.5 text-text-muted hover:text-text-primary transition-colors cursor-pointer" />
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -168,7 +168,7 @@ export default function TelemetrySettingsPanel() {
                   className="relative z-10 flex-1 py-1 px-0 text-xs text-text-primary/50 bg-none! data-active:bg-none! data-active:text-accent-green transition-colors cursor-pointer hover:text-text-primary"
                 >
                   {activeTab === ch && (
-                    <motion.div
+                    <m.div
                       layoutId="telemetry-settings-tab-bg"
                       className="absolute inset-0.5 rounded-sm border border-accent-green/40"
                       transition={{ type: "spring", stiffness: 400, damping: 30 }}
@@ -184,7 +184,7 @@ export default function TelemetrySettingsPanel() {
                 {CHANNELS.map((ch) =>
                   ch === activeTab ? (
                     <TabsContent key={ch} value={ch} forceMount asChild>
-                      <motion.div
+                      <m.div
                         key={ch}
                         custom={direction}
                         initial={{ x: direction * 24, opacity: 0 }}
@@ -196,7 +196,7 @@ export default function TelemetrySettingsPanel() {
                           settings={getChannelSettings(ch)}
                           onChange={(s) => updateChannel(ch, s)}
                         />
-                      </motion.div>
+                      </m.div>
                     </TabsContent>
                   ) : null
                 )}

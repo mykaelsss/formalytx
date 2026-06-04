@@ -5,7 +5,7 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
-import { MotionConfig } from "motion/react";
+import { LazyMotion, domMax, MotionConfig } from "motion/react";
 
 function makeQueryClient() {
   return new QueryClient({
@@ -45,7 +45,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <MotionConfig reducedMotion="user">{children}</MotionConfig>
+      <MotionConfig reducedMotion="user">
+        <LazyMotion features={domMax}>{children}</LazyMotion>
+      </MotionConfig>
     </QueryClientProvider>
   );
 }

@@ -2,7 +2,7 @@ export const CHART_STORAGE_KEYS = {
   lapChart: "lap_chart_settings",
 } as const;
 
-export const TELEMETRY_CHANNELS = [
+const TELEMETRY_CHANNELS = [
   "speed",
   "throttle",
   "brake",

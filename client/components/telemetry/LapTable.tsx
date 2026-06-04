@@ -1,7 +1,7 @@
 import { Compound, DriverLaps, Lap, Team } from "@/lib/types";
 import TireBadge from "./TireBadge";
 import { Skeleton } from "../ui/skeleton";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { getCompoundColor } from "@/lib/compounds";
@@ -19,7 +19,6 @@ interface LapTableProps {
 
 export default function LapTable({ teams }: LapTableProps) {
   const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const year = searchParams.get("year") ?? "";
   const round = searchParams.get("round") ?? "";
@@ -90,7 +89,7 @@ export default function LapTable({ teams }: LapTableProps) {
           .map((e) => lapTimeToMs(e.lap.lap_time))
           .filter((ms): ms is number => ms !== null);
         const fastest = times.length ? Math.min(...times) : Infinity;
-        const sorted = [...entries].sort((a, b) => {
+        const sorted = entries.toSorted((a, b) => {
           const aMs = lapTimeToMs(a.lap.lap_time);
           const bMs = lapTimeToMs(b.lap.lap_time);
           if (aMs === null && bMs === null) return 0;
@@ -126,10 +125,11 @@ export default function LapTable({ teams }: LapTableProps) {
                 ms !== null && fastest !== Infinity ? ms - fastest : null;
               const isInvalid = lap.lap_time === null;
               return (
-                <div
+                <button
+                  type="button"
                   key={abbreviation}
                   className={cn(
-                    "flex items-center gap-3 px-3 py-2 border-b border-surface-border/40 last:border-0 cursor-pointer hover:bg-surface-card-hover transition-colors",
+                    "w-full text-left flex items-center gap-3 px-3 py-2 border-b border-surface-border/40 last:border-0 cursor-pointer hover:bg-surface-card-hover transition-colors",
                     isFastestOverall && "bg-purple-950/20",
                     isDriverBest && !isFastestOverall && "bg-green-950/20",
                     isInvalid && "opacity-40",
@@ -137,13 +137,13 @@ export default function LapTable({ teams }: LapTableProps) {
                   onClick={() =>
                     toggleLap(selectedLaps, abbreviation, lapNumber, {
                       router,
-                      pathname,
+                      pathname: window.location.pathname,
                       searchParams,
                     })
                   }
                 >
                   <span
-                    className="h-2 w-2 rounded-full"
+                    className="size-2 rounded-full"
                     style={{ background: color }}
                   ></span>
                   <span className="font-bold w-8 shrink-0" style={{ color }}>
@@ -179,7 +179,7 @@ export default function LapTable({ teams }: LapTableProps) {
                       {formatDelta(deltaMs)}
                     </span>
                   ) : null}
-                </div>
+                </button>
               );
             })}
           </div>
@@ -191,7 +191,7 @@ export default function LapTable({ teams }: LapTableProps) {
             </div>
             {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="flex items-center gap-3 px-3 py-2">
-                <Skeleton className="h-5 w-5 rounded-full bg-text-disabled" />
+                <Skeleton className="size-5 rounded-full bg-text-disabled" />
                 <Skeleton className="h-3 w-8 bg-text-disabled" />
                 <Skeleton className="h-3 w-20 bg-text-disabled" />
               </div>

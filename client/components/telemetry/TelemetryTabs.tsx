@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "motion/react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { m } from "motion/react";
 import SessionViewer from "./SessionViewer";
 import TelemetryViewer from "./TelemetryViewer";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { parseSelectedLaps } from "@/lib/selectedLaps";
 import { useLapTelemetry } from "@/lib/hooks/useLapTelemetry";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
@@ -30,7 +30,6 @@ const tabs = [
 
 export default function TelemetryTabs({ activeTab }: TelemetryTabsProps) {
   const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const year = searchParams.get("year") ?? "";
   const round = searchParams.get("round") ?? "";
@@ -62,11 +61,10 @@ export default function TelemetryTabs({ activeTab }: TelemetryTabsProps) {
   // activeTab can change via URL navigation (e.g. "Compare fastest laps")
   // without going through handleTabChange, so mark it visited here too —
   // otherwise the target tab's content never mounts until a refresh.
-  useEffect(() => {
-    setVisitedTabs((prev) =>
-      prev.has(activeTab) ? prev : new Set(prev).add(activeTab),
-    );
-  }, [activeTab]);
+  // Adjusting state during render is React's recommended pattern over an effect.
+  if (!visitedTabs.has(activeTab)) {
+    setVisitedTabs((prev) => new Set(prev).add(activeTab));
+  }
   const [isSharing, setIsSharing] = useState(false);
 
   const { data: sessionData, isFetching: isLoadingSession } = useSession(
@@ -102,7 +100,7 @@ export default function TelemetryTabs({ activeTab }: TelemetryTabsProps) {
 
   const handleTabChange = (val: string) => {
     setVisitedTabs((prev) => new Set(prev).add(val));
-    router.replace(pathname + "?" + createQueryString("tab", val));
+    router.replace(window.location.pathname + "?" + createQueryString("tab", val));
   };
 
   const createQueryString = useCallback(
@@ -127,10 +125,10 @@ export default function TelemetryTabs({ activeTab }: TelemetryTabsProps) {
             <TabsTrigger
               key={tab.value}
               value={tab.value}
-              className="relative z-10 py-6 px-6 text-text-primary/50 bg-none! data-active:bg-none data-active:text-accent-green transition-colors cursor-pointer hover:text-text-primary"
+              className="relative z-10 p-6 text-text-primary/50 bg-none! data-active:bg-none data-active:text-accent-green transition-colors cursor-pointer hover:text-text-primary"
             >
               {activeTab === tab.value && (
-                <motion.div
+                <m.div
                   layoutId="tab-bg"
                   className="absolute inset-2 rounded-sm border border-accent-green/40"
                   transition={{ type: "spring", stiffness: 400, damping: 30 }}

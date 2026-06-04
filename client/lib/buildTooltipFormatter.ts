@@ -124,7 +124,7 @@ export function buildTooltipFormatter({
     // Order laps fastest-to-slowest by overall lap time so the reference lap
     // (fastest) sits at the top and deltas read top-down; laps with no recorded
     // time sort last.
-    const ordered = [...inGrid].sort(
+    const ordered = inGrid.toSorted(
       (a, b) =>
         (telemetryData[a.seriesIndex % nLaps]?.lap_time ?? Infinity) -
         (telemetryData[b.seriesIndex % nLaps]?.lap_time ?? Infinity),

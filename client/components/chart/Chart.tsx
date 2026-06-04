@@ -270,6 +270,7 @@ export default function Chart<T extends LegendItem>({
             const hidden = hiddenSeries.has(item.key);
             return (
               <button
+                type="button"
                 key={item.key}
                 onClick={() => toggleSeries(item.key)}
                 className="flex items-center gap-2 cursor-pointer"

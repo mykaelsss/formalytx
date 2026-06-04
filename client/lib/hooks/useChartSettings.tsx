@@ -81,7 +81,7 @@ function readSnapshot(id: string): ChartSettings {
 }
 
 // --- writes ---
-export function updateChartSettings(id: string, settings: ChartSettings) {
+function updateChartSettings(id: string, settings: ChartSettings) {
   if (readMode(id) === "shared") {
     // editing a shared chart edits global → all shared charts update
     if (globalSnapshot === settings) return;
@@ -98,7 +98,7 @@ export function updateChartSettings(id: string, settings: ChartSettings) {
   }
 }
 
-export function setChartMode(id: string, mode: "shared" | "scoped") {
+function setChartMode(id: string, mode: "shared" | "scoped") {
   if (readMode(id) === mode) return;
   modeCache.set(id, mode);
   try { localStorage.setItem(modeKey(id), mode); }

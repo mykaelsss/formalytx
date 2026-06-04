@@ -27,8 +27,8 @@ export default function ChartSettingsPanel({
     return (
         <Popover>
           <PopoverTrigger asChild>
-              <button className="shrink-0">
-                <Settings className="h-4.5 w-4.5 text-text-muted hover:text-text-primary transition-colors cursor-pointer" />
+              <button type="button" className="shrink-0">
+                <Settings className="size-4.5 text-text-muted hover:text-text-primary transition-colors cursor-pointer" />
               </button>
           </PopoverTrigger>
           <PopoverContent className="w-64 bg-surface-card text-text-primary flex flex-col gap-4 shadow-[0_8px_32px_rgba(0,0,0,0.6)]" align="end" side="bottom">
@@ -47,7 +47,7 @@ export default function ChartSettingsPanel({
                   className="mx-auto w-full max-w-xs"
                 />
               </div>
-              <div className="flex items-center justify-between space-x-2 w-full">
+              <div className="flex items-center justify-between gap-2 w-full">
                 <Label htmlFor="chart_smooth">Smooth Lines</Label>
                 <Switch 
                 id="chart_smooth" 
@@ -56,7 +56,7 @@ export default function ChartSettingsPanel({
                 className="cursor-pointer data-[state=checked]:bg-muted-foreground" 
                 />
               </div>
-              <div className="flex items-center justify-between space-x-2 w-full">
+              <div className="flex items-center justify-between gap-2 w-full">
                 <Label htmlFor="chart_smooth">Show Symbols</Label>
                 <Switch 
                 id="chart_show_symbol" 

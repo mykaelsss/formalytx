@@ -27,7 +27,7 @@ export default function ColorSwatch({
       <ColorPickerTrigger asChild>
         <ColorPickerSwatch
           aria-label={label}
-          className="w-5 h-5 rounded-sm border border-surface-border cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          className="size-5 rounded-sm border border-surface-border cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         />
       </ColorPickerTrigger>
       <ColorPickerContent className="bg-surface-card border-surface-border text-text-primary shadow-[0_8px_32px_rgba(0,0,0,0.6)]">

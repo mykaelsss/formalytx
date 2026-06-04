@@ -385,7 +385,7 @@ export default function TelemetryViewer() {
     <div className="bg-surface-base">
       <div className="flex flex-col gap-4">
         <div className="border border-surface-border bg-surface-base flex flex-col items-start py-8 px-4 rounded-xs">
-          <div className="w-full flex flex-col min-w-0 px-4 py-4 gap-4 overflow-hidden">
+          <div className="w-full flex flex-col min-w-0 p-4 gap-4 overflow-hidden">
             <div className="relative flex items-center justify-center py-0 pl-2 pr-5 gap-2">
               <div className="flex flex-wrap gap-x-4 gap-y-2 w-full justify-center">
                 {legendItems.map((item) => {
@@ -435,9 +435,8 @@ export default function TelemetryViewer() {
                     customColors[item.key] ??
                     lapColor(colorSlots[item.key] ?? 0);
                   return (
-                    <div
+                    <output
                       key={item.key}
-                      role="status"
                       aria-live="polite"
                       className="flex items-center gap-2 rounded-full border border-surface-border bg-surface-card py-1 pl-2 pr-3"
                       style={{ opacity: 0.6 }}
@@ -455,7 +454,7 @@ export default function TelemetryViewer() {
                         size={12}
                         aria-label={`Loading ${item.driver} Lap ${item.lap}`}
                       />
-                    </div>
+                    </output>
                   );
                 })}
               </div>
@@ -472,14 +471,13 @@ export default function TelemetryViewer() {
                 className="w-full h-full"
               />
               {isPending && telemetryData.length === 0 && (
-                <div
-                  role="status"
+                <output
                   aria-live="polite"
                   className="absolute inset-0 flex items-center justify-center gap-2 text-sm text-text-muted"
                 >
                   <Loader2 className="animate-spin" size={16} aria-hidden="true" />
                   Loading telemetry…
-                </div>
+                </output>
               )}
             </div>
             <div className="flex justify-end pl-2 pr-5 min-h-9 -translate-y-2">

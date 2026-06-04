@@ -33,9 +33,10 @@ export function useLapTelemetry(
     (results: UseQueryResult<LapTelemetry[], Error>[]) => ({
       data: results.flatMap((r) => r.data ?? []),
       isPending: results.some((r) => r.isPending),
-      failed: entries
-        .map((entry, i) => ({ ...entry, refetch: results[i]!.refetch }))
-        .filter((_, i) => results[i]?.isError),
+      failed: entries.reduce<FailedLap[]>((acc, entry, i) => {
+        if (results[i]?.isError) acc.push({ ...entry, refetch: results[i]!.refetch });
+        return acc;
+      }, []),
       pending: entries.filter((_, i) => results[i]?.isPending),
     }),
     [entries],

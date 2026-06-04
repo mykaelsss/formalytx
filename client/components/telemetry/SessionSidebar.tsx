@@ -87,9 +87,10 @@ export default function SessionSidebar({
   const isLoadingLaps = lapQueries.some((q) => q.isLoading);
 
   const compareFastestLaps = () => {
+    const byCode = new Map(driverLaps.map((d) => [d.abbreviation, d]));
     const entries: string[] = [];
     for (const code of selectedDrivers) {
-      const dl = driverLaps.find((d) => d.abbreviation === code);
+      const dl = byCode.get(code);
       if (!dl) continue;
       let bestNum: number | null = null;
       let bestMs = Infinity;
@@ -128,9 +129,9 @@ export default function SessionSidebar({
           >
             <SelectGroup>
               <SelectLabel>Year</SelectLabel>
-              {YEARS.map((y, idx) => {
+              {YEARS.map((y) => {
                 return (
-                  <SelectItem key={idx} className="text-text-primary" value={y}>
+                  <SelectItem key={y} className="text-text-primary" value={y}>
                     {y}
                   </SelectItem>
                 );
@@ -155,10 +156,10 @@ export default function SessionSidebar({
           >
             <SelectGroup>
               <SelectLabel>Schedule</SelectLabel>
-              {schedule?.rounds.map((r, idx) => {
+              {schedule?.rounds.map((r) => {
                 return (
                   <SelectItem
-                    key={idx}
+                    key={r.round}
                     className="text-text-primary"
                     value={r.round.toString()}
                   >
@@ -186,10 +187,10 @@ export default function SessionSidebar({
           >
             <SelectGroup>
               <SelectLabel>Session</SelectLabel>
-              {roundSchedule?.sessions.map((s, idx) => {
+              {roundSchedule?.sessions.map((s) => {
                 return (
                   <SelectItem
-                    key={idx}
+                    key={s.identifier}
                     className="text-text-primary"
                     value={s.identifier}
                   >
@@ -212,19 +213,20 @@ export default function SessionSidebar({
                 </div>
               </div>
             ))
-          : teams.map((team, idx) => {
+          : teams.map((team) => {
               return (
-                <div key={idx} className="animate-in fade-in-5 duration-1000">
+                <div key={team.name} className="animate-in fade-in-5 duration-1000">
                   <span className="text-[10px] text-text-primary uppercase tracking-widest mb-0.5 block truncate">
                     {team.name}
                   </span>
                   <div className="flex gap-1">
-                    {team?.drivers.map((d: Driver, id) => {
+                    {team?.drivers.map((d: Driver) => {
                       if (!d) return;
                       const active = selectedDrivers.includes(d.abbreviation);
                       return (
                         <button
-                          key={id}
+                          type="button"
+                          key={d.abbreviation}
                           onClick={() => toggleDriver(d.abbreviation)}
                           disabled={!d.participated}
                           className={cn("flex-1 py-1 text-xs font-bold text-center relative overflow-hidden transition-colors",
@@ -252,6 +254,7 @@ export default function SessionSidebar({
       </div>
       <div className="flex flex-col gap-2 pt-3">
         <button
+          type="button"
           onClick={compareFastestLaps}
           disabled={selectedDrivers.length === 0 || isLoadingLaps}
           className="cursor-pointer w-full py-2 text-xs font-bold uppercase tracking-widest bg-surface-card hover:bg-surface-card-hover text-text-secondary transition-colors rounded-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-card"
@@ -259,6 +262,7 @@ export default function SessionSidebar({
           {isLoadingLaps ? "Loading laps…" : "Compare fastest laps"}
         </button>
         <button
+          type="button"
           className="cursor-pointer w-full py-2 text-xs font-bold uppercase tracking-widest bg-surface-card hover:bg-surface-card-hover text-text-secondary transition-colors rounded-md"
           onClick={clearDrivers}
         >
