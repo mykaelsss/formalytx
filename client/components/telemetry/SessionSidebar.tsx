@@ -156,10 +156,10 @@ export default function SessionSidebar({
           >
             <SelectGroup>
               <SelectLabel>Schedule</SelectLabel>
-              {schedule?.rounds.map((r) => {
+              {schedule?.rounds.map((r, idx) => {
                 return (
                   <SelectItem
-                    key={r.round}
+                    key={idx}
                     className="text-text-primary"
                     value={r.round.toString()}
                   >
