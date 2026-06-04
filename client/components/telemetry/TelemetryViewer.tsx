@@ -22,6 +22,7 @@ import ColorSwatch from "../ui/ColorSwatch";
 import { CHANNELS, GRID_GAP, GRID_HEIGHT } from "@/lib/constants";
 import { CHART_STRUCTURE } from "@/lib/chartStructure";
 import { buildTooltipFormatter } from "@/lib/buildTooltipFormatter";
+import { useToggleSeries } from "@/lib/hooks/useToggleSeries";
 
 function keysFromSelected(selected: Map<string, number[]>): string[] {
   return Array.from(selected.entries()).flatMap(([driver, lapNumbers]) =>
@@ -62,25 +63,7 @@ export default function TelemetryViewer() {
     allocateColorSlots({}, keysFromSelected(parseSelectedLaps(laps))),
   );
 
-  const toggleSeries = useCallback(
-    (name: string) => {
-      if (!chartRef.current) return;
-      const chart = getInstanceByDom(chartRef.current);
-      if (!chart) return;
-      const isHidden = hiddenSeries.has(name);
-      chart.dispatchAction({
-        type: isHidden ? "legendSelect" : "legendUnSelect",
-        name,
-      });
-      setHiddenSeries((prev) => {
-        const next = new Set(prev);
-        if (isHidden) next.delete(name);
-        else next.add(name);
-        return next;
-      });
-    },
-    [hiddenSeries, chartRef],
-  );
+  const toggleSeries = useToggleSeries(hiddenSeries, setHiddenSeries, chartRef);
 
   const selectedLaps = useMemo(() => parseSelectedLaps(laps), [laps]);
 
@@ -95,11 +78,6 @@ export default function TelemetryViewer() {
     [selectedLaps, router, pathname, searchParams],
   );
 
-  // When the `laps` param changes, reconcile per-lap state against the new
-  // selection: reassign stable color slots (so removing one lap doesn't recolor
-  // the rest) and drop color/visibility overrides for laps that are no longer
-  // selected so stale keys don't accumulate. Adjusting state during render
-  // (rather than in an effect) is React's recommended pattern here.
   const [prevLaps, setPrevLaps] = useState(laps);
   if (laps !== prevLaps) {
     setPrevLaps(laps);
@@ -124,8 +102,9 @@ export default function TelemetryViewer() {
   const { data: circuitData } = useCircuitInfo(year, round);
   const {data: telemetryData, isPending, failed, pending} = useLapTelemetry(year, round, session, selectedLaps);
 
-  const shownToastsRef = useRef<Set<string>>(new Set());
+  const shownToastsRef = useRef<Set<string> | null>(null);
   useEffect(() => {
+    if (shownToastsRef.current === null) return;
     const current = new Set(failed.map((f) => `${f.driver}-${f.lap}`));
     for (const key of shownToastsRef.current) {
       if (!current.has(key)) {

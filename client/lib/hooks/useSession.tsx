@@ -6,6 +6,6 @@ export function useSession(year: string, round: string, session: string) {
     queryKey: ["session", year, round, session],
     queryFn: () => fetchSession(year, round, session),
     enabled: !!year && !!round && !!session,
-    placeholderData: (previousData, previousQuery) => previousData,
+    placeholderData: (previousData) => previousData,
   });
 }

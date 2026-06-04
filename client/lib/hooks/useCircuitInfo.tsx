@@ -6,6 +6,6 @@ export function useCircuitInfo(year: string, round: string) {
     queryKey: ["circuit", year, round],
     queryFn: () => fetchCircuit(year, round),
     enabled: !!year && !!round,
-    placeholderData: (previousData, previousQuery) => previousData,
+    placeholderData: (previousData) => previousData,
   });
 }

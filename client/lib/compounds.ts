@@ -29,12 +29,3 @@ export const CompoundLetter: Record<Compound, string> = {
   INTERMEDIATE: "I",
   WET: "W",
 };
-
-export const getCompoundColor = (compound: Compound, year: string) => {
-  const key = compound.toUpperCase() as Compound;
-  return (
-    (year === "2018"
-      ? { ...CompoundColor, ...CompoundColor2018 }
-      : CompoundColor)[key] ?? "oklch(94.01% 0.000 0)"
-  );
-};

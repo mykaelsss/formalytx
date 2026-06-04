@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo,  useState } from "react";
 import { m } from "motion/react";
 import SessionViewer from "./SessionViewer";
 import TelemetryViewer from "./TelemetryViewer";
@@ -15,7 +15,6 @@ import { useSession } from "@/lib/hooks/useSession";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "../ui/tooltip";
 
@@ -40,14 +39,9 @@ export default function TelemetryTabs({ activeTab }: TelemetryTabsProps) {
     new Set([activeTab]),
   );
 
-  // Prefetch telemetry the moment the user changes the lap selection — even
-  // while still on the session tab — so it's ready when they open telemetry.
-  // But a fresh load of a shared link (laps already in the URL, no interaction)
-  // shouldn't fetch until they actually open the tab, so gate on engagement:
-  // either the selection changed since mount, or telemetry has been visited.
-  const initialLaps = useRef(laps);
+  const [initialLaps] = useState(laps);
   const [hasInteracted, setHasInteracted] = useState(false);
-  if (!hasInteracted && laps !== initialLaps.current) setHasInteracted(true);
+  if (!hasInteracted && laps !== initialLaps) setHasInteracted(true);
 
   const selectedLaps = useMemo(() => parseSelectedLaps(laps), [laps]);
   useLapTelemetry(
@@ -58,10 +52,6 @@ export default function TelemetryTabs({ activeTab }: TelemetryTabsProps) {
     hasInteracted || visitedTabs.has("telemetry"),
   );
 
-  // activeTab can change via URL navigation (e.g. "Compare fastest laps")
-  // without going through handleTabChange, so mark it visited here too —
-  // otherwise the target tab's content never mounts until a refresh.
-  // Adjusting state during render is React's recommended pattern over an effect.
   if (!visitedTabs.has(activeTab)) {
     setVisitedTabs((prev) => new Set(prev).add(activeTab));
   }
