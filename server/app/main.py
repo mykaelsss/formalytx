@@ -5,10 +5,14 @@ from app.schedule.routes import router as schedule_router
 
 app = FastAPI()
 
+origins = [
+    "http://localhost:3000"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_methods=["*"],
+    allow_origins=origins,
+    allow_methods=["GET"],
     allow_headers=["*"],
 )
 
