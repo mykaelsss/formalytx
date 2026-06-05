@@ -7,7 +7,6 @@ import {
   Slider as SliderPrimitive,
   Slot as SlotPrimitive,
 } from "radix-ui";
-import * as React from "react";
 import { useComposedRefs } from "@/lib/compose-refs";
 import { cn } from "@/lib/utils";
 import { VisuallyHiddenInput } from "@/components/visually-hidden-input";
@@ -28,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 const ROOT_NAME = "ColorPicker";
 const ROOT_IMPL_NAME = "ColorPickerImpl";
@@ -428,10 +428,10 @@ interface Store {
   notify: () => void;
 }
 
-const StoreContext = React.createContext<Store | null>(null);
+const StoreContext = createContext<Store | null>(null);
 
 function useStoreContext(consumerName: string) {
-  const context = React.useContext(StoreContext);
+  const context = useContext(StoreContext);
   if (!context) {
     throw new Error(`\`${consumerName}\` must be used within \`${ROOT_NAME}\``);
   }
@@ -441,12 +441,12 @@ function useStoreContext(consumerName: string) {
 function useStore<U>(selector: (state: StoreState) => U): U {
   const store = useStoreContext("useStore");
 
-  const getSnapshot = React.useCallback(
+  const getSnapshot = useCallback(
     () => selector(store.getState()),
     [store, selector],
   );
 
-  return React.useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
+  return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
 }
 
 interface ColorPickerContextValue {
@@ -457,12 +457,12 @@ interface ColorPickerContextValue {
   required?: boolean;
 }
 
-const ColorPickerContext = React.createContext<ColorPickerContextValue | null>(
+const ColorPickerContext = createContext<ColorPickerContextValue | null>(
   null,
 );
 
 function useColorPickerContext(consumerName: string) {
-  const context = React.useContext(ColorPickerContext);
+  const context = useContext(ColorPickerContext);
   if (!context) {
     throw new Error(`\`${consumerName}\` must be used within \`${ROOT_NAME}\``);
   }
@@ -528,7 +528,7 @@ function ColorPicker(props: ColorPickerProps) {
     onFormatChange,
   });
 
-const store = React.useMemo<Store>(() => {
+const store = useMemo<Store>(() => {
   const notify = () => {
     for (const cb of listenersRef.current) cb();
   };
@@ -624,7 +624,7 @@ function ColorPickerImpl(props: ColorPickerImplProps) {
 
   const dir = DirectionPrimitive.useDirection(dirProp);
 
-  const [formTrigger, setFormTrigger] = React.useState<RootElement | null>(
+  const [formTrigger, setFormTrigger] = useState<RootElement | null>(
     null,
   );
   const composedRef = useComposedRefs(ref, (node) => setFormTrigger(node));
@@ -646,7 +646,7 @@ function ColorPickerImpl(props: ColorPickerImplProps) {
     }
   }, [openProp]);
 
-  const contextValue = React.useMemo<ColorPickerContextValue>(
+  const contextValue = useMemo<ColorPickerContextValue>(
     () => ({
       dir,
       disabled,
@@ -779,11 +779,11 @@ function ColorPickerArea(props: DivProps) {
 
   const hsv = useStore((state) => state.hsv);
 
-  const isDraggingRef = React.useRef(false);
-  const areaRef = React.useRef<HTMLDivElement>(null);
+  const isDraggingRef = useRef(false);
+  const areaRef = useRef<HTMLDivElement>(null);
   const composedRef = useComposedRefs(ref, areaRef);
 
-  const updateColorFromPosition = React.useCallback(
+  const updateColorFromPosition = useCallback(
     (clientX: number, clientY: number) => {
       if (!areaRef.current) return;
 
@@ -807,7 +807,7 @@ function ColorPickerArea(props: DivProps) {
     [hsv, store],
   );
 
-  const onPointerDown = React.useCallback(
+  const onPointerDown = useCallback(
     (event: React.PointerEvent<AreaElement>) => {
       if (context.disabled) return;
       propsRef.current.onPointerDown?.(event);
@@ -820,7 +820,7 @@ function ColorPickerArea(props: DivProps) {
     [context.disabled, updateColorFromPosition, propsRef],
   );
 
-  const onPointerMove = React.useCallback(
+  const onPointerMove = useCallback(
     (event: React.PointerEvent<AreaElement>) => {
       propsRef.current.onPointerMove?.(event);
       if (event.defaultPrevented) return;
@@ -832,7 +832,7 @@ function ColorPickerArea(props: DivProps) {
     [updateColorFromPosition, propsRef],
   );
 
-  const onPointerUp = React.useCallback(
+  const onPointerUp = useCallback(
     (event: React.PointerEvent<AreaElement>) => {
       propsRef.current.onPointerUp?.(event);
       if (event.defaultPrevented) return;
@@ -903,7 +903,7 @@ function ColorPickerHueSlider(
 
   const hsv = useStore((state) => state.hsv);
 
-  const onValueChange = React.useCallback(
+  const onValueChange = useCallback(
     (values: number[]) => {
       const newHsv: HSVColorValue = {
         h: values[0] ?? 0,
@@ -950,7 +950,7 @@ function ColorPickerAlphaSlider(
   const color = useStore((state) => state.color);
   const hsv = useStore((state) => state.hsv);
 
-  const onValueChange = React.useCallback(
+  const onValueChange = useCallback(
     (values: number[]) => {
       const alpha = (values[0] ?? 0) / 100;
       const newColor = { ...color, a: alpha };
@@ -1007,7 +1007,7 @@ function ColorPickerSwatch(props: DivProps) {
   const color = useStore((state) => state.color);
   const format = useStore((state) => state.format);
 
-  const backgroundStyle = React.useMemo(() => {
+  const backgroundStyle = useMemo(() => {
     if (!color) {
       return {
         background:
@@ -1063,7 +1063,7 @@ function ColorPickerEyeDropper(props: React.ComponentProps<typeof Button>) {
 
   const isDisabled = disabled || context.disabled;
 
-  const onEyeDropper = React.useCallback(async () => {
+  const onEyeDropper = useCallback(async () => {
     if (!window.EyeDropper) return;
 
     try {
@@ -1115,7 +1115,7 @@ function ColorPickerFormatSelect(props: ColorPickerFormatSelectProps) {
 
   const format = useStore((state) => state.format);
 
-  const onFormatChange = React.useCallback(
+  const onFormatChange = useCallback(
     (value: ColorFormat) => {
       store.setFormat(value);
     },
@@ -1164,7 +1164,7 @@ function ColorPickerInput(props: ColorPickerInputProps) {
   const format = useStore((state) => state.format);
   const hsv = useStore((state) => state.hsv);
 
-  const onColorChange = React.useCallback(
+  const onColorChange = useCallback(
     (newColor: ColorValue) => {
       const newHsv = rgbToHsv(newColor);
       store.setColor(newColor);
@@ -1272,7 +1272,7 @@ function HexInput(props: FormatInputProps) {
   const hexValue = rgbToHex(color);
   const alphaValue = Math.round((color?.a ?? 1) * 100);
 
-  const onHexChange = React.useCallback(
+  const onHexChange = useCallback(
     (event: React.ChangeEvent<InputElement>) => {
       const value = event.target.value;
       const parsedColor = parseColorString(value);
@@ -1283,7 +1283,7 @@ function HexInput(props: FormatInputProps) {
     [color, onColorChange],
   );
 
-  const onAlphaChange = React.useCallback(
+  const onAlphaChange = useCallback(
     (event: React.ChangeEvent<InputElement>) => {
       const value = Number.parseInt(event.target.value, 10);
       if (!Number.isNaN(value) && value >= 0 && value <= 100) {
@@ -1356,7 +1356,7 @@ function RgbInput(props: FormatInputProps) {
   const bValue = Math.round(color?.b ?? 0);
   const alphaValue = Math.round((color?.a ?? 1) * 100);
 
-  const onChannelChange = React.useCallback(
+  const onChannelChange = useCallback(
     (channel: "r" | "g" | "b" | "a", max: number, isAlpha = false) =>
       (event: React.ChangeEvent<InputElement>) => {
         const value = Number.parseInt(event.target.value, 10);
@@ -1445,10 +1445,10 @@ function HslInput(props: FormatInputProps) {
     ...inputProps
   } = props;
 
-  const hsl = React.useMemo(() => rgbToHsl(color), [color]);
+  const hsl = useMemo(() => rgbToHsl(color), [color]);
   const alphaValue = Math.round((color?.a ?? 1) * 100);
 
-  const onHslChannelChange = React.useCallback(
+  const onHslChannelChange = useCallback(
     (channel: "h" | "s" | "l", max: number) =>
       (event: React.ChangeEvent<InputElement>) => {
         const value = Number.parseInt(event.target.value, 10);
@@ -1461,7 +1461,7 @@ function HslInput(props: FormatInputProps) {
     [hsl, color, onColorChange],
   );
 
-  const onAlphaChange = React.useCallback(
+  const onAlphaChange = useCallback(
     (event: React.ChangeEvent<InputElement>) => {
       const value = Number.parseInt(event.target.value, 10);
       if (!Number.isNaN(value) && value >= 0 && value <= 100) {
@@ -1554,7 +1554,7 @@ function HsbInput(props: HsbInputProps) {
 
   const alphaValue = Math.round((hsv?.a ?? 1) * 100);
 
-  const onHsvChannelChange = React.useCallback(
+  const onHsvChannelChange = useCallback(
     (channel: "h" | "s" | "v", max: number) =>
       (event: React.ChangeEvent<InputElement>) => {
         const value = Number.parseInt(event.target.value, 10);
@@ -1567,7 +1567,7 @@ function HsbInput(props: HsbInputProps) {
     [hsv, onColorChange],
   );
 
-  const onAlphaChange = React.useCallback(
+  const onAlphaChange = useCallback(
     (event: React.ChangeEvent<InputElement>) => {
       const value = Number.parseInt(event.target.value, 10);
       if (!Number.isNaN(value) && value >= 0 && value <= 100) {

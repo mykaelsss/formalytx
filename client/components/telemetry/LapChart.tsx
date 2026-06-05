@@ -1,7 +1,6 @@
 "use client";
 
-import * as echarts from "echarts";
-import { type LineSeriesOption } from "echarts";
+import { format, type LineSeriesOption } from "echarts";
 import type { TopLevelFormatterParams } from "echarts/types/dist/shared";
 import type { Team } from "@/lib/types";
 import { useCallback, useMemo } from "react";
@@ -121,7 +120,7 @@ export default function LapChart({ teams }: LapChartProps) {
         const marker = `
                     <span 
                     class="inline-block w-5 mr-2 border-t-2" 
-                    style="border-color:${echarts.format.encodeHTML(p.color as string)};border-style:${echarts.format.encodeHTML(lineStyle)};">
+                    style="border-color:${format.encodeHTML(p.color as string)};border-style:${format.encodeHTML(lineStyle)};">
                     </span>
                   `;
         return `
@@ -129,11 +128,11 @@ export default function LapChart({ teams }: LapChartProps) {
                   <div class="flex items-center">
                     ${marker}
                     <span
-                    class="leading-none">${echarts.format.encodeHTML(p.seriesName ?? "")}
+                    class="leading-none">${format.encodeHTML(p.seriesName ?? "")}
                     </span>
                   </div>
                   <span class="font-mono">
-                  ${echarts.format.encodeHTML(secondsToLapTime((p.value as [number, number])[1], 3))}
+                  ${format.encodeHTML(secondsToLapTime((p.value as [number, number])[1], 3))}
                   </span>
                 </div>`;
       })
@@ -143,7 +142,7 @@ export default function LapChart({ teams }: LapChartProps) {
 
     return `
               <div class="text-xs text-white">
-                <span>Lap ${echarts.format.encodeHTML(String(lap))}</span>
+                <span>Lap ${format.encodeHTML(String(lap))}</span>
                 ${rows}
               </div>
             `;

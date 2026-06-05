@@ -1,6 +1,6 @@
 "use client";
 
-import * as React from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 type InputValue = string[] | string;
 
@@ -28,13 +28,13 @@ function VisuallyHiddenInput<T = InputValue>(
     ...inputProps
   } = props;
 
-  const isCheckInput = React.useMemo(
+  const isCheckInput = useMemo(
     () => type === "checkbox" || type === "radio" || type === "switch",
     [type],
   );
-  const inputRef = React.useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const prevValueRef = React.useRef<{
+  const prevValueRef = useRef<{
     value: T | boolean | undefined;
     previous: T | boolean | undefined;
   }>({
@@ -42,7 +42,7 @@ function VisuallyHiddenInput<T = InputValue>(
     previous: isCheckInput ? checked : value,
   });
 
-  const prevValue = React.useMemo(() => {
+  const prevValue = useMemo(() => {
     const currentValue = isCheckInput ? checked : value;
     if (prevValueRef.current.value !== currentValue) {
       prevValueRef.current.previous = prevValueRef.current.value;
@@ -51,12 +51,12 @@ function VisuallyHiddenInput<T = InputValue>(
     return prevValueRef.current.previous;
   }, [isCheckInput, value, checked]);
 
-  const [controlSize, setControlSize] = React.useState<{
+  const [controlSize, setControlSize] = useState<{
     width?: number;
     height?: number;
   }>({});
 
-  React.useLayoutEffect(() => {
+  useLayoutEffect(() => {
     if (!control) {
       setControlSize({});
       return;
@@ -100,7 +100,7 @@ function VisuallyHiddenInput<T = InputValue>(
     };
   }, [control]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const input = inputRef.current;
     if (!input) return;
 
@@ -126,7 +126,7 @@ function VisuallyHiddenInput<T = InputValue>(
     }
   }, [prevValue, value, checked, bubbles, isCheckInput]);
 
-  const composedStyle = React.useMemo<React.CSSProperties>(() => {
+  const composedStyle = useMemo<React.CSSProperties>(() => {
     return {
       ...style,
       ...(controlSize.width !== undefined && controlSize.height !== undefined

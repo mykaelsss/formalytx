@@ -1,8 +1,8 @@
-import * as echarts from "echarts";
 import type { Corner, LapTelemetry } from "./types";
 import { CHANNELS, SAMPLE_COUNT } from "./constants";
 import { sampleLap } from "./interp";
 import { formatChannelVal, formatLapTime, getCornerLabel } from "./format";
+import { format } from "echarts";
 
 type TooltipContext = {
   nLaps: number;
@@ -28,7 +28,7 @@ export function buildTooltipFormatter({
   hoveredSeriesRef,
 }: TooltipContext) {
   const marker = (color: string) =>
-    `<span class="inline-block w-5 mr-2 border-t-2" style="border-color:${echarts.format.encodeHTML(color)}"></span>`;
+    `<span class="inline-block w-5 mr-2 border-t-2" style="border-color:${format.encodeHTML(color)}"></span>`;
 
   const row = (label: string, val: string) =>
     `<div class="flex justify-between gap-6 text-xs leading-relaxed">` +
@@ -36,7 +36,7 @@ export function buildTooltipFormatter({
     `<span class="text-text-primary font-mono">${val}</span></div>`;
 
   const header = (dist: number) => {
-    const label = echarts.format.encodeHTML(getCornerLabel(corners, dist));
+    const label = format.encodeHTML(getCornerLabel(corners, dist));
     const total = corners.length ? ` · ${Math.round(dist)} m` : "";
     return `<div class="text-xs text-text-muted mb-1">${label}${total}</div>`;
   };
@@ -89,7 +89,7 @@ export function buildTooltipFormatter({
           return deltas[idx] ?? 0;
         };
         let html = header(currentDistance);
-        html += `<div class="flex items-center text-xs font-semibold text-text-secondary mb-1">${marker(s?.color ?? "#888")}${echarts.format.encodeHTML(lapName)}</div>`;
+        html += `<div class="flex items-center text-xs font-semibold text-text-secondary mb-1">${marker(s?.color ?? "#888")}${format.encodeHTML(lapName)}</div>`;
         const isRef = lapName === refLapName;
         const refTimeAtDistance = () => {
           const times = refTimes;
@@ -152,7 +152,7 @@ export function buildTooltipFormatter({
         : channel && formatChannelVal(channel, p.value[1]);
       html +=
         `<div class="flex justify-between gap-6 text-xs leading-relaxed">` +
-        `<div class="flex items-center">${marker(p.color)}<span class="text-text-secondary">${echarts.format.encodeHTML(p.seriesName)}</span></div>` +
+        `<div class="flex items-center">${marker(p.color)}<span class="text-text-secondary">${format.encodeHTML(p.seriesName)}</span></div>` +
         `<span class="text-text-primary font-mono">${valStr}</span></div>`;
     }
     return html;
