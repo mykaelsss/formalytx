@@ -1,4 +1,10 @@
-export default function SVGLogo({height = 150, width = 150, }: {height?: number, width?: number }) {
+export default function SVGLogo({
+  height = 150,
+  width = 150,
+}: {
+  height?: number;
+  width?: number;
+}) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -1111,7 +1117,7 @@ export default function SVGLogo({height = 150, width = 150, }: {height?: number,
         </clipPath>
         <linearGradient
           x1={0}
-          gradientTransform="matrix(606.52349, 0, 0, 389.101028, 0.487473, -0.000000000000066342)"
+          gradientTransform="matrix(1289.7, 0, 0, 389.101028, 0, -0.000000000000066342)"
           y1={0}
           x2={1}
           gradientUnits="userSpaceOnUse"
@@ -2419,7 +2425,7 @@ export default function SVGLogo({height = 150, width = 150, }: {height?: number,
                               <g clipPath="url(#56c863cb1d)">
                                 <g clipPath="url(#83694d71d8)">
                                   <path
-                                    fill="url(#b014c0707a)"
+                                    fill="url(#98a4d428ab)"
                                     d="M 4.257812 0 L 4.257812 474.5 L 1362.265625 474.5 L 1362.265625 0 Z M 4.257812 0 "
                                     fillRule="nonzero"
                                   />

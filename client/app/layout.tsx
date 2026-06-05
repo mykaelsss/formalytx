@@ -7,6 +7,7 @@ import Providers from './providers'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { TooltipProvider } from "@/components/ui/tooltip"
 import Footer from "@/components/Footer"
+import Nav from "@/components/Nav"
 
   const exo2 = Exo_2({
     subsets: ['latin'],
@@ -39,6 +40,7 @@ export default function RootLayout({
       <body className="bg-background min-h-full flex flex-col">
         <Providers>
           <TooltipProvider>
+            <Nav />
             {children}
           </TooltipProvider>
           <Toaster 
