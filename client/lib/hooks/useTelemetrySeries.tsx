@@ -17,11 +17,6 @@ export function useTelemetrySeries(
     return visibleLaps.length > 0 ? fastestLap(visibleLaps) : null;
   }, [telemetryData, hiddenSeries]);
 
-  // Remember the reference chosen while at least one lap was visible, so that
-  // when every lap is hidden we keep it rather than picking the overall fastest
-  // — which would compute deltas against a lap the user can't see and force a
-  // needless rebuild. Adjusting state during render is React's recommended
-  // pattern here.
   const [lastVisible, setLastVisible] = useState<LapTelemetry | null>(null);
   if (fastestVisible && fastestVisible !== lastVisible) {
     setLastVisible(fastestVisible);

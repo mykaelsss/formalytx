@@ -30,22 +30,6 @@ export type Weather = {
   rainfall: boolean;
 }
 
-export type Result = {
-  position: number;
-  code: string;
-  full_name: string;
-  team: string;
-  team_color: string;
-  grid: number | null;
-  laps: number | null;
-  time: string | null;
-  q1: string | null;
-  q2: string | null;
-  q3: string | null;
-  status: string | null;
-  points: number;
-}
-
 export type Session = {
   name: string;
   identifier: string;

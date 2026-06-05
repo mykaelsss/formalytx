@@ -6,6 +6,6 @@ export function useRoundSchedule(year: string, round: string) {
     queryKey: ["roundSchedule", year, round],
     queryFn: () => fetchRoundSchedule(year, round),
     enabled: !!year && !!round,
-    placeholderData: (previousData, previousQuery) => previousData,
+    placeholderData: (previousData) => previousData,
   });
 }

@@ -1,24 +1,19 @@
 "use client";
 
 import {
-  Dispatch,
-  SetStateAction,
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import LapTable from "./LapTable";
 import SessionSidebar from "./SessionSidebar";
 import { m } from "motion/react";
-import { Driver, DriverLaps, Team, TelemetrySession } from "@/lib/types";
-import axios from "axios";
+import { Team } from "@/lib/types";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import LapChart from "./LapChart";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/hooks/useSession";
-import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
 
 export default function SessionViewer() {
   const router = useRouter();

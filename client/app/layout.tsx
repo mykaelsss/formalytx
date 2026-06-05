@@ -6,7 +6,7 @@ import { Toaster } from "@/components/ui/sonner"
 import Providers from './providers'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { TooltipProvider } from "@/components/ui/tooltip"
-import SVGLogo from "@/components/ui/SVGLogo";
+import Footer from "@/components/Footer"
 
   const exo2 = Exo_2({
     subsets: ['latin'],
@@ -50,6 +50,7 @@ export default function RootLayout({
             },
           }} 
           />
+          <Footer />
           <ReactQueryDevtools />
         </Providers>
       </body>

@@ -1,10 +1,9 @@
-import { Compound, DriverLaps, Lap, Team } from "@/lib/types";
+import { Compound, Lap, Team } from "@/lib/types";
 import TireBadge from "./TireBadge";
 import { Skeleton } from "../ui/skeleton";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { getCompoundColor } from "@/lib/compounds";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
 import { toggleLap, parseSelectedLaps } from "@/lib/selectedLaps";
 import { lapTimeToMs } from "@/lib/format";
@@ -48,11 +47,6 @@ export default function LapTable({ teams }: LapTableProps) {
       new Map(teams.flatMap((t) => t.drivers).map((d) => [d.abbreviation, d])),
     [teams],
   );
-
-  const maxLaps = useMemo(() => {
-    if (!visibleLaps.length) return null;
-    return Math.max(...visibleLaps.map((d) => d.laps.length));
-  }, [visibleLaps]);
 
   const overallFastest = useMemo(() => {
     const times = visibleLaps
@@ -199,92 +193,6 @@ export default function LapTable({ teams }: LapTableProps) {
           </div>
         )}
       </div>
-      {/* <div className="overflow-x-auto w-full border-collapse border border-surface-border">
-      <table className="text-xs max-w-full w-full">
-        <thead>
-          <tr className="border-b border-surface-border">
-            {selectedDrivers.length > 0 && (
-              <>
-                {maxLaps && (
-                  <th className="px-3 py-2 text-text-muted font-bold uppercase tracking-widest bg-surface-base w-16 sticky left-0 z-10">
-                    Laps
-                  </th>
-                )}
-                {Array.from({ length: maxLaps ?? 0 }).map((_, idx) => {
-                  return (
-                    <th
-                      key={idx}
-                      className="py-2 text-text-muted text-center tabular-nums"
-                    >
-                      {idx + 1}
-                    </th>
-                  );
-                })}
-              </>
-            )}
-          </tr>
-        </thead>
-        <tbody>
-          {visibleLaps.map((d, idx) => {
-            const driver = driverMap.get(d.abbreviation);
-            return (
-              <tr key={idx} className="border-b border-surface-border/80">
-                <td
-                  className="text-center font-bold sticky left-0 z-10 bg-surface-card/90"
-                  style={{ color: `#${driver?.team_color}` }}
-                >
-                  <span>{driver?.abbreviation}</span>
-                </td>
-                {d.laps.map((lap, idx) => {
-                  const color = getCompoundColor(
-                    (lap.compound as Compound) ?? "HARD",
-                    year,
-                  );
-                  return (
-                    <td key={idx} className="px-3 py-2">
-                      <div
-                        className="inline-flex items-center justify-center gap-1.5 px-3 has-[>svg]:px-2.5 h-8 rounded-[10px] border font-medium"
-                        style={{
-                          backgroundColor: `color-mix(in oklch, ${color}, transparent 85%)`,
-                          borderColor: `color-mix(in oklch, ${color}, transparent 75%)`,
-                        }}
-                      >
-                        <TireBadge
-                          compound={
-                            (lap.compound?.toUpperCase() ?? "HARD") as Compound
-                          }
-                          size={22}
-                          year={year}
-                        />
-                        <span className="text-text-primary font-mono tabular-nums">
-                          {lap.lap_time ?? "N/A"}
-                        </span>
-                      </div>
-                    </td>
-                  );
-                })}
-              </tr>
-            );
-          })}
-          {loadingLaps && (
-            <tr className="border-b border-surface-border/80">
-              <td className="min-w-14.25">
-                <Skeleton className="w-6 h-3.5 rounded-[2.2px] bg-text-disabled mx-auto" />
-              </td>
-              <td colSpan={(maxLaps ?? 3) + 1} className="px-3 py-2">
-                <div className="inline-flex items-center gap-2">
-                  {Array.from({
-                    length: Math.min(maxLaps ?? 3, 10),
-                  }).map((_, i) => (
-                    <Skeleton key={i} className="h-8 w-24 bg-text-disabled" />
-                  ))}
-                </div>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div> */}
     </>
   );
 }

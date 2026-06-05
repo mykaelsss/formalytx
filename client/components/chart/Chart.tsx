@@ -1,18 +1,17 @@
 "use client";
 
-import * as echarts from "echarts";
-import type { EChartsOption, LineSeriesOption } from "echarts";
+import { getInstanceByDom, type EChartsOption, type LineSeriesOption } from "echarts";
 import type { TopLevelFormatterParams } from "echarts/types/dist/shared";
 import type { ChartSettings } from "@/lib/types";
 import { ZoomOut } from "lucide-react";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import ChartSettingsPanel from "./ChartSettingsPanel";
-import { defaultChartSettings } from "@/lib/utils";
 import { useChartSettings } from "@/lib/hooks/useChartSettings";
 import { useEcharts } from "@/lib/hooks/useEcharts";
+import { useToggleSeries } from "@/lib/hooks/useToggleSeries";
 
 type LegendItem = {
   key: string;
@@ -56,7 +55,7 @@ export default function Chart<T extends LegendItem>({
 
   useEffect(() => {
     if (!chartRef.current) return;
-    const chart = echarts.getInstanceByDom(chartRef.current);
+    const chart = getInstanceByDom(chartRef.current);
     if (!chart) return;
 
     const seriesDefaults = {
@@ -173,7 +172,7 @@ export default function Chart<T extends LegendItem>({
 
   useEffect(() => {
     if (!chartRef.current || !onSeriesClick) return;
-    const chart = echarts.getInstanceByDom(chartRef.current);
+    const chart = getInstanceByDom(chartRef.current);
     if (!chart) return;
     chart.on("click", (params) => {
       if (params.componentType === "series") {
@@ -185,7 +184,7 @@ export default function Chart<T extends LegendItem>({
 
   useEffect(() => {
     if (!chartRef.current) return;
-    const chart = echarts.getInstanceByDom(chartRef.current);
+    const chart = getInstanceByDom(chartRef.current);
     if (!chart) return;
 
     chart.on("mouseover", (params) => {
@@ -222,7 +221,7 @@ export default function Chart<T extends LegendItem>({
 
   useEffect(() => {
     if (!chartRef.current) return;
-    const chart = echarts.getInstanceByDom(chartRef.current);
+    const chart = getInstanceByDom(chartRef.current);
     if (!chart) return;
     chart.on("datazoom", () => {
       const option = chart.getOption() as {
@@ -237,30 +236,13 @@ export default function Chart<T extends LegendItem>({
   }, [chartRef]);
 
   const resetZoom = () => {
-    const chart = echarts.getInstanceByDom(chartRef.current!);
+    const chart = getInstanceByDom(chartRef.current!);
     if (!chart) return;
     chart.dispatchAction({ type: "dataZoom", start: 0, end: 100 });
     setIsZoomed(false);
   };
 
-  const toggleSeries = useCallback(
-    (name: string) => {
-      const chart = echarts.getInstanceByDom(chartRef.current!);
-      if (!chart) return;
-      const isHidden = hiddenSeries.has(name);
-      chart.dispatchAction({
-        type: isHidden ? "legendSelect" : "legendUnSelect",
-        name,
-      });
-      setHiddenSeries((prev) => {
-        const next = new Set(prev);
-        if (isHidden) next.delete(name);
-        else next.add(name);
-        return next;
-      });
-    },
-    [hiddenSeries, chartRef],
-  );
+  const toggleSeries = useToggleSeries(hiddenSeries, setHiddenSeries, chartRef)
 
   return (
     <div className="w-full h-120 flex flex-col border border-surface-border bg-surface-card">

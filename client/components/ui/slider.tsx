@@ -40,7 +40,7 @@ function Slider({
         data-slot="slider-track"
         className="relative h-1 w-full grow rounded-full"
         style={{
-          background: `linear-gradient(to right, oklch(0.922 0 0) ${((_values[0] - min) / (max - min)) * 100}%, oklch(0.269 0 0) ${((_values[0] - min) / (max - min)) * 100}%)`,
+          background: `linear-gradient(to right, oklch(0.922 0 0) ${(((_values[0] ?? 0) - min) / (max - min)) * 100}%, oklch(0.269 0 0) ${(((_values[0] ?? 0) - min) / (max - min)) * 100}%)`,
         }}
       >
         <SliderPrimitive.Range
