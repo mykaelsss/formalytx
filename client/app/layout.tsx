@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/sonner"
 import Providers from './providers'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { TooltipProvider } from "@/components/ui/tooltip"
+import SVGLogo from "@/components/ui/SVGLogo";
 
   const exo2 = Exo_2({
     subsets: ['latin'],
@@ -19,8 +20,8 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 
 export const metadata: Metadata = {
   title: {
-    default: "F1 Telemetry",
-    template: "%s · F1 Telemetry",
+    default: "Formalytx",
+    template: "%s · Formalytx",
   },
   description: "Explore Formula 1 session results, lap times, and car telemetry.",
 };
