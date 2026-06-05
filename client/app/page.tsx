@@ -7,8 +7,16 @@ import { Button } from "@/components/ui/button";
 export const metadata: Metadata = {
   title: "Formalytx · F1 Telemetry Explorer",
   description:
-    "Explore Formula 1 car telemetry data — speed, throttle, brakes, and more — powered by FastF1.",
+    "Explore Formula 1 seasons, events, sessions, driver laps, and raw car telemetry — powered by FastF1.",
 };
+
+const steps = [
+  { label: "Year", color: "var(--data-blue)" },
+  { label: "Event", color: "var(--data-violet)" },
+  { label: "Session", color: "var(--data-amber)" },
+  { label: "Drivers", color: "var(--data-cyan)" },
+  { label: "Telemetry", color: "var(--accent-green)" },
+];
 
 export default function Home() {
   return (
@@ -33,20 +41,19 @@ export default function Home() {
         </div>
 
         <h1 className="text-4xl sm:text-[52px] font-bold text-text-primary leading-[1.1] tracking-tight">
-          Formula 1 telemetry,{" "}
+          Formula 1 data,{" "}
           <br className="hidden sm:block" />
           <span className="text-accent-green">decoded.</span>
         </h1>
 
         <p className="text-text-secondary text-base sm:text-lg leading-relaxed max-w-xl">
-          Formalytx lets you explore raw car telemetry data from Formula 1
-          sessions — speed traces, throttle, braking, gear, and DRS — for any
-          driver and any lap.
+          Formalytx lets you navigate F1 seasons, events, and sessions — then
+          dive into driver laps and raw car telemetry, all in one place.
         </p>
 
         <Button asChild className="rounded-none text-xs cursor-pointer text-accent-green border-surface-border bg-surface-card px-6 py-6 hover:bg-surface-card-hover hover:text-accent-green">
           <Link href="/telemetry">
-            Explore Telemetry
+            Get Started
             <ChevronRight />
           </Link>
         </Button>
@@ -69,7 +76,7 @@ export default function Home() {
         className="w-full max-w-4xl animate-fade-in"
         style={{ animationDelay: "280ms", animationFillMode: "both", animationDuration: "500ms" }}
       >
-        <div className="group relative flex flex-col gap-4 p-6 rounded-xl border border-surface-border bg-surface-card hover:bg-surface-card-hover hover:border-accent-green transition-colors duration-200">
+        <div className="group relative flex flex-col gap-6 p-6 rounded-xl border border-surface-border bg-surface-card hover:bg-surface-card-hover hover:border-accent-green transition-colors duration-200">
           <div className="absolute top-0 left-6 right-6 h-px rounded-full bg-accent-green opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
 
           <div className="size-10 rounded-lg flex items-center justify-center shrink-0 bg-accent-green/15">
@@ -78,13 +85,28 @@ export default function Home() {
 
           <div className="flex flex-col gap-2">
             <h2 className="text-text-primary font-semibold text-base leading-snug">
-              Car Telemetry
+              One tool, one flow
             </h2>
             <p className="text-text-secondary text-sm leading-relaxed max-w-2xl">
-              Select a session, pick a driver, and plot their telemetry channel
-              by channel — speed, throttle, brake pressure, gear selection, and
-              DRS — sampled at high frequency for any lap in the session.
+              Everything lives in a single sidebar. Pick a year and event, choose a session, select the drivers you want to compare, then plot their lap times and raw car telemetry — all without leaving the page.
             </p>
+          </div>
+
+          {/* Step flow */}
+          <div className="flex items-center gap-0 flex-wrap">
+            {steps.map((step, i) => (
+              <div key={step.label} className="flex items-center">
+                <span
+                  className="font-mono text-[10px] font-semibold tracking-widest uppercase px-2.5 py-1 border"
+                  style={{ color: step.color, borderColor: step.color, background: `color-mix(in oklch, ${step.color} 10%, transparent)` }}
+                >
+                  {step.label}
+                </span>
+                {i < steps.length - 1 && (
+                  <ChevronRight className="size-3 text-text-muted shrink-0" />
+                )}
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -92,7 +114,7 @@ export default function Home() {
       {/* ── FastF1 Credit ── */}
       <section
         className="w-full max-w-4xl animate-fade-in"
-        style={{ animationDelay: "360ms", animationFillMode: "both", animationDuration: "500ms" }}
+        style={{ animationDelay: "540ms", animationFillMode: "both", animationDuration: "500ms" }}
       >
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5 p-6 rounded-xl border border-surface-border bg-surface-card">
           <div className="flex flex-col gap-1.5">
