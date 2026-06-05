@@ -8,6 +8,7 @@ export function useEcharts() {
     const el = chartRef.current;
     if (!el) return;
     const instance = init(el);
+    if (!instance) return;
     const ro = new ResizeObserver(() => instance.resize());
     ro.observe(el);
     return () => {
