@@ -107,7 +107,7 @@ export default function TelemetryTabs({ activeTab }: TelemetryTabsProps) {
     <Tabs
       value={activeTab}
       onValueChange={handleTabChange}
-      className="px-2 mx-auto max-w-400"
+      className="px-2 mx-auto max-w-400 py-8"
     >
       <div className="flex items-end justify-between">
         <TabsList className="relative flex rounded-xs bg-surface-card border border-white/10 p-1 gap-0 mt-10 h-10! min-w-1/4">
