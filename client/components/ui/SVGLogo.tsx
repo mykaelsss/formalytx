@@ -1,9 +1,11 @@
 export default function SVGLogo({
-  height = 150,
-  width = 150,
+  height = "auto",
+  width = "100%",
+  className,
 }: {
-  height?: number;
-  width?: number;
+  height?: string | number;
+  width?: string | number;
+  className?: string;
 }) {
   return (
     <svg
@@ -14,6 +16,7 @@ export default function SVGLogo({
       viewBox="0 0 1362.75 474.749983"
       height={height}
       preserveAspectRatio="xMidYMid meet"
+      className={className}
     >
       <defs>
         <filter x="0%" y="0%" width="100%" height="100%" id="f5f2f3a002">
