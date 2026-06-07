@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastf1.exceptions import (
+    DataNotLoadedError,
     ErgastError,
     FastF1CriticalError,
     InvalidSessionError,
@@ -78,7 +79,7 @@ async def _upstream_error(request: Request, exc: Exception) -> JSONResponse:
     return _error(502, "Failed to retrieve data from the upstream provider.")
 
 
-for _exc in (ValueError, InvalidSessionError, NoLapDataError, SessionNotAvailableError):
+for _exc in (ValueError, InvalidSessionError, NoLapDataError, SessionNotAvailableError, DataNotLoadedError):
     app.add_exception_handler(_exc, _not_found)
 app.add_exception_handler(RateLimitExceededError, _rate_limited)
 app.add_exception_handler(FastF1CriticalError, _upstream_error)
