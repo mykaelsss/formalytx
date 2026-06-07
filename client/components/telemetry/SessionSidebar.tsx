@@ -193,6 +193,7 @@ export default function SessionSidebar({
                     key={s.identifier}
                     className="text-text-primary"
                     value={s.identifier}
+                    disabled={s.status !== "completed"}
                   >
                     {s.name}
                   </SelectItem>
