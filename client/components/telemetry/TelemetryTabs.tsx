@@ -34,9 +34,6 @@ export default function TelemetryTabs({ activeTab: initialTab }: TelemetryTabsPr
   const round = searchParams.get("round") ?? "";
   const session = searchParams.get("session") ?? "";
   const laps = searchParams.get("laps") ?? "";
-  // Drive the live tab off client searchParams, not the server prop: a prod
-  // build serves searchParam-only soft navs from the router cache without
-  // re-running the server component, so the prop would stay frozen until reload.
   const activeTab = searchParams.get("tab") ?? initialTab;
 
   const [visitedTabs, setVisitedTabs] = useState<Set<string>>(
