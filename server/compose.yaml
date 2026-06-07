@@ -1,0 +1,30 @@
+services:
+    web:
+      healthcheck:
+        test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+        interval: 30s
+        timeout: 5s
+        retries: 3
+      build: .
+      expose:
+        - "8000"
+      environment:
+        - UV_NO_DEV=1
+        - FASTF1_CACHE_DIR=/home/nonroot/.fastf1
+        - CORS_ORIGINS=http://localhost:3000,https://formalytx.com
+      volumes:
+        - fastf1cache:/home/nonroot/.fastf1
+      restart: unless-stopped
+
+    nginx:
+      build: ./nginx
+      ports:
+        - "80:80"
+      depends_on:
+        web: 
+          condition: service_healthy
+
+      restart: unless-stopped
+
+volumes:
+  fastf1cache:
