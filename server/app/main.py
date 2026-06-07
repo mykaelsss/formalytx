@@ -17,6 +17,7 @@ from fastf1.exceptions import (
 )
 
 from . import config
+from app.fastf1_loader import set_cache_dir, start_pruner
 from app.sessions.routes import router as session_router
 from app.schedule.routes import router as schedule_router
 
@@ -38,7 +39,17 @@ async def lifespan(app: FastAPI):
       settings = get_settings()
       os.makedirs(settings.fastf1_cache_dir, exist_ok=True)
       fastf1.Cache.enable_cache(settings.fastf1_cache_dir)
-      yield
+      set_cache_dir(settings.fastf1_cache_dir)
+      stop_pruner = start_pruner(
+          settings.fastf1_cache_dir,
+          settings.cache_max_mb * 1024 * 1024,
+          settings.cache_prune_target_mb * 1024 * 1024,
+          settings.cache_prune_interval_seconds,
+      )
+      try:
+          yield
+      finally:
+          stop_pruner.set()
 
 app = FastAPI(lifespan=lifespan)
 
