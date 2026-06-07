@@ -4,6 +4,11 @@ FROM ghcr.io/astral-sh/uv:0.11.19-python3.14-trixie-slim
 RUN groupadd --system --gid 999 nonroot \
  && useradd --system --gid 999 --uid 999 --create-home nonroot
 
+# gosu lets the entrypoint drop from root to nonroot after fixing mount ownership
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gosu \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Keeps Python from buffering stdout and stderr to avoid situations where
@@ -37,13 +42,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Reset the entrypoint, don't invoke `uv`
-ENTRYPOINT []
-
 RUN mkdir -p /home/nonroot/.fastf1 \
    && chown -R nonroot:nonroot /home/nonroot/.fastf1
 
-# Use the non-root user to run our application
-USER nonroot
+# Entrypoint runs as root only long enough to chown the mounted cache disk,
+# then execs the server as nonroot via gosu (see docker-entrypoint.sh).
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
-CMD [ "uv", "run", "fastapi", "run", "--host", "0.0.0.0", "/app/app/main.py" ]
+CMD ["sh", "-c", "exec fastapi run --host 0.0.0.0 --port ${PORT:-8000} app/main.py"]
