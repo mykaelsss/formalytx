@@ -12,7 +12,7 @@ import type { TelemetrySettings } from "@/lib/types";
 import { Loader2, X, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { lapAddedToast } from "@/lib/toasts";
+import { consumeLapAwaitingReview, lapAddedToast, lapReadyToast } from "@/lib/toasts";
 import { parseSelectedLaps, toggleLap } from "@/lib/selectedLaps";
 import { seriesKey } from "@/lib/seriesKey";
 import { allocateColorSlots, lapColor } from "@/lib/colors";
@@ -158,6 +158,18 @@ export default function TelemetryViewer() {
       toast.dismiss("telemetry-range-error");
     }
   }, [error]);
+
+  // Announce laps the user added once their telemetry has loaded and rendered.
+  useEffect(() => {
+    for (const item of legendItems) {
+      if (consumeLapAwaitingReview(item.key)) {
+        const viewParams = new URLSearchParams(searchParams.toString());
+        viewParams.set("tab", "telemetry");
+        const viewUrl = pathname + "?" + viewParams.toString();
+        lapReadyToast(item.driver, item.lap, () => router.push(viewUrl));
+      }
+    }
+  }, [legendItems, searchParams, pathname, router]);
 
   // seriesRef is read synchronously by the settings/colors merge effects
   // (whose deps don't include series), so it must stay in sync here.

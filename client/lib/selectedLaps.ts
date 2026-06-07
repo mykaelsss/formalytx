@@ -1,5 +1,10 @@
 import type { ReadonlyURLSearchParams } from "next/navigation";
-import { lapAddedToast } from "./toasts";
+import {
+  consumeLapAwaitingReview,
+  lapAddedToast,
+  markLapAwaitingReview,
+} from "./toasts";
+import { seriesKey } from "./seriesKey";
 
 export function parseSelectedLaps(laps: string): Map<string, number[]> {
   return laps.split("|").reduce((map, entry) => {
@@ -44,10 +49,13 @@ export function toggleLap(
   router.push(pathname + "?" + params.toString());
 
   if (idx === -1) {
+    markLapAwaitingReview(seriesKey(driver, lapNumber));
     const viewParams = new URLSearchParams(searchParams.toString());
     viewParams.set("laps", lapsStr);
     viewParams.set("tab", "telemetry");
     const viewUrl = pathname + "?" + viewParams.toString();
     lapAddedToast(driver, lapNumber, () => router.push(viewUrl));
+  } else {
+    consumeLapAwaitingReview(seriesKey(driver, lapNumber));
   }
 }
