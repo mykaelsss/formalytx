@@ -26,7 +26,7 @@ def _get_session_date(event, identifier: str):
 def get_session(year: int, round: int, identifier: str):
     event = fastf1.get_event(year, round)
     session = event.get_session(identifier)
-    session.load(laps=False, telemetry=False, weather=False, messages=False)
+    session.load(laps=True, telemetry=False, weather=False, messages=False)
     
     is_practice = session.name in ["Practice 1", "Practice 2", "Practice 3", "Practice 4"]
     
