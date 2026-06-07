@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM ghcr.io/astral-sh/uv:0.11.19-python3.14-trixie-slim
 
 # Setup a non-root user
