@@ -5,7 +5,9 @@ import { interp, linspace, sampleLap } from "./interp";
 import { computeDelta } from "./delta";
 import { seriesKey } from "./seriesKey";
 
-function emptyTelemetry(error: string | null) {
+type ExcludedLap = { driver: string; lap_number: number };
+
+function emptyTelemetry(error: string | null, excluded: ExcludedLap[] = []) {
   return {
     series: [],
     markLineSeries: [],
@@ -15,6 +17,7 @@ function emptyTelemetry(error: string | null) {
     commonEnd: 0,
     refLapName: "",
     refTimes: [] as number[],
+    excluded,
     error,
   };
 }
@@ -32,25 +35,62 @@ export function buildSeries(
   const ref = refLap;
   const refLapName = seriesKey(ref.driver, ref.lap_number);
 
-  // Common distance range: latest start, earliest end, so every lap has real data across the range
-  const starts = telemetryData
-    .map((lap) => lap.channels.distance[0])
-    .filter((d): d is number => d !== undefined);
-  const ends = telemetryData
-    .map((lap) => lap.channels.distance.at(-1))
-    .filter((d): d is number => d !== undefined);
-  if (
-    starts.length !== telemetryData.length ||
-    ends.length !== telemetryData.length
-  ) {
+  const ranges = telemetryData.map((lap) => ({
+    lap,
+    start: lap.channels.distance[0],
+    end: lap.channels.distance.at(-1),
+  }));
+  if (ranges.some((r) => r.start === undefined || r.end === undefined)) {
     return emptyTelemetry("Telemetry is missing distance data");
   }
-  const commonStart = Math.max(...starts);
-  const commonEnd = Math.min(...ends);
 
-  if (commonStart >= commonEnd) {
+  // Keep as many laps as possible that share a common distance range. Among
+  // overlapping intervals, the largest mutually-overlapping set is the one
+  // covering the most-stabbed point, so we test each lap's start as a candidate
+  // stab point and keep every lap covering the best one. Candidates are clamped
+  // into the reference lap's range so the reference is always kept (delta is
+  // computed against it). Non-overlapping laps are excluded from the comparison
+  // instead of collapsing the range and failing every lap.
+  const refStart = ref.channels.distance[0]!;
+  const refEnd = ref.channels.distance.at(-1)!;
+  const intervals = ranges.map((r) => ({
+    lap: r.lap,
+    start: r.start!,
+    end: r.end!,
+  }));
+
+  const covers = (iv: { start: number; end: number }, x: number) =>
+    iv.start <= x && iv.end >= x;
+
+  const candidates = new Set<number>([refStart]);
+  for (const iv of intervals) {
+    if (iv.start >= refStart && iv.start <= refEnd) candidates.add(iv.start);
+  }
+
+  let stab = refStart;
+  let bestCount = -1;
+  for (const x of candidates) {
+    const count = intervals.reduce((n, iv) => n + (covers(iv, x) ? 1 : 0), 0);
+    if (count > bestCount) {
+      bestCount = count;
+      stab = x;
+    }
+  }
+
+  const kept: LapTelemetry[] = [];
+  const excluded: ExcludedLap[] = [];
+  for (const iv of intervals) {
+    if (covers(iv, stab)) kept.push(iv.lap);
+    else excluded.push({ driver: iv.lap.driver, lap_number: iv.lap.lap_number });
+  }
+
+  const commonStart = Math.max(...kept.map((l) => l.channels.distance[0]!));
+  const commonEnd = Math.min(...kept.map((l) => l.channels.distance.at(-1)!));
+
+  if (kept.length === 0 || commonEnd <= commonStart) {
     return emptyTelemetry(
       "Selected laps don't share an overlapping distance range",
+      excluded,
     );
   }
 
@@ -93,7 +133,7 @@ export function buildSeries(
     })),
   ];
 
-  const lapEntries = telemetryData.map((lap, i) => {
+  const lapEntries = kept.map((lap, i) => {
     const name = seriesKey(lap.driver, lap.lap_number);
     return { lap, name, color: lapColor(colorSlots[name] ?? i) };
   });
@@ -170,6 +210,7 @@ export function buildSeries(
     commonEnd,
     refLapName,
     refTimes,
+    excluded,
     error: null,
   };
 }

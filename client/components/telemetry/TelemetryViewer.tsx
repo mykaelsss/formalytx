@@ -145,8 +145,38 @@ export default function TelemetryViewer() {
     commonEnd,
     refLapName,
     refTimes,
+    excluded,
     error,
   } = useTelemetrySeries(telemetryData, circuitData, hiddenSeries, colorSlots);
+
+  // Laps that loaded but don't share a distance range with the others are
+  // dropped from the chart rather than failing it — surface each one so the
+  // user knows why it isn't plotted.
+  const excludedToastsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const current = new Set(excluded.map((e) => `${e.driver}-${e.lap_number}`));
+    for (const key of excludedToastsRef.current) {
+      if (!current.has(key)) {
+        toast.dismiss(`lap-excluded-${key}`);
+        excludedToastsRef.current.delete(key);
+      }
+    }
+    for (const e of excluded) {
+      const key = `${e.driver}-${e.lap_number}`;
+      if (excludedToastsRef.current.has(key)) continue;
+      consumeLapAwaitingReview(seriesKey(e.driver, e.lap_number));
+      toast.warning(
+        `${e.driver} Lap ${e.lap_number} doesn't overlap the other laps — excluded from comparison`,
+        {
+          id: `lap-excluded-${key}`,
+          duration: Infinity,
+          closeButton: true,
+          className: "border-data-amber!",
+        },
+      );
+      excludedToastsRef.current.add(key);
+    }
+  }, [excluded]);
 
   useEffect(() => {
     if (error) {
