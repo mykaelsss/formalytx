@@ -1,15 +1,33 @@
 from functools import lru_cache
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
 import fastf1
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastf1.exceptions import (
+    ErgastError,
+    FastF1CriticalError,
+    InvalidSessionError,
+    NoLapDataError,
+    RateLimitExceededError,
+)
 
 from . import config
 from app.sessions.routes import router as session_router
 from app.schedule.routes import router as schedule_router
+
+logger = logging.getLogger("uvicorn.error")
+
+try:
+    # Private module; raised by session.load() when live timing has no data.
+    from fastf1._api import SessionNotAvailableError
+except Exception:  # tolerate an upstream rename without breaking startup
+    class SessionNotAvailableError(Exception):
+        pass
 
 @lru_cache
 def get_settings(): 
@@ -23,6 +41,37 @@ async def lifespan(app: FastAPI):
       yield
 
 app = FastAPI(lifespan=lifespan)
+
+
+def _error(status: int, detail: str, headers: dict | None = None) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"detail": detail}, headers=headers)
+
+
+async def _not_found(request: Request, exc: Exception) -> JSONResponse:
+    # Invalid year/round/session or a session the API has no usable data for.
+    logger.info("404 for %s: %s", request.url.path, exc)
+    return _error(404, str(exc) or "The requested session data is not available.")
+
+
+async def _rate_limited(request: Request, exc: Exception) -> JSONResponse:
+    logger.warning("Upstream rate limit for %s: %s", request.url.path, exc)
+    return _error(
+        503,
+        "The upstream data provider is rate limiting requests. Please try again shortly.",
+        headers={"Retry-After": "60"},
+    )
+
+
+async def _upstream_error(request: Request, exc: Exception) -> JSONResponse:
+    logger.error("Upstream data error for %s: %s", request.url.path, exc)
+    return _error(502, "Failed to retrieve data from the upstream provider.")
+
+
+for _exc in (ValueError, InvalidSessionError, NoLapDataError, SessionNotAvailableError):
+    app.add_exception_handler(_exc, _not_found)
+app.add_exception_handler(RateLimitExceededError, _rate_limited)
+app.add_exception_handler(FastF1CriticalError, _upstream_error)
+app.add_exception_handler(ErgastError, _upstream_error)
 
 app.add_middleware(
     CORSMiddleware,

@@ -2,6 +2,9 @@ import fastf1
 import pandas as pd
 from fastf1.core import Laps
 import numpy as np
+from fastapi import HTTPException
+
+from app.fastf1_loader import locked_load
 
 IDENTIFIER_MAP = {
     "FP1": "Practice 1",
@@ -26,7 +29,7 @@ def _get_session_date(event, identifier: str):
 def get_session(year: int, round: int, identifier: str):
     event = fastf1.get_event(year, round)
     session = event.get_session(identifier)
-    session.load(laps=True, telemetry=False, weather=False, messages=True)
+    locked_load(session, year, round, identifier, laps=True, telemetry=False, weather=False, messages=True)
     
     is_practice = session.name in ["Practice 1", "Practice 2", "Practice 3", "Practice 4"]
     
@@ -83,7 +86,7 @@ def _format_laps(driver_laps: Laps) -> list:
 def get_driver_laps(year: int, round: int, identifier: str, drivers: str):
     abbreviations = [d.strip() for d in drivers.split(',')]
     session = fastf1.get_session(year, round, identifier)
-    session.load(laps=True, telemetry=False, weather=False, messages=False)
+    locked_load(session, year, round, identifier, laps=True, telemetry=False, weather=False, messages=False)
 
     driver_laps = session.laps.pick_drivers(abbreviations)
 
@@ -139,15 +142,53 @@ def load_session(year: int, round: int, identifier: str):
         "drivers": drivers,
     }
 
+def _parse_selected_laps(selected_laps: str) -> list[tuple[str, list[int]]]:
+    """Parse 'DRIVER:lap[,lap...]|DRIVER:lap...' into (driver, [laps]) pairs.
+
+    Raises HTTPException(400) on malformed input so a bad client query param
+    doesn't surface as a 404/500.
+    """
+    selections: list[tuple[str, list[int]]] = []
+    for entry in selected_laps.split("|"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        driver, sep, lap_str = entry.partition(":")
+        driver = driver.strip()
+        if not sep or not driver:
+            raise HTTPException(
+                400,
+                f"Malformed lap selection '{entry}'; expected 'DRIVER:lap[,lap...]'.",
+            )
+        laps: list[int] = []
+        for token in lap_str.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                laps.append(int(token))
+            except ValueError:
+                raise HTTPException(
+                    400, f"Invalid lap number '{token}' for driver '{driver}'."
+                )
+        if not laps:
+            raise HTTPException(400, f"No lap numbers given for driver '{driver}'.")
+        selections.append((driver, laps))
+
+    if not selections:
+        raise HTTPException(400, "No laps selected.")
+    return selections
+
+
 def get_lap_telemetry(year: int, round: int, identifier: str, selected_laps: str):
+    selections = _parse_selected_laps(selected_laps)
     session = fastf1.get_session(year, round, identifier)
-    session.load(laps=True, telemetry=True, weather=False, messages=False)
+    locked_load(session, year, round, identifier, laps=True, telemetry=True, weather=False, messages=False)
 
     result = []
-    for entry in selected_laps.split("|"):
-        driver, lap_nums = entry.split(":")
+    for driver, lap_numbers in selections:
         driver_laps = session.laps.pick_drivers(driver)
-        for lap_number in lap_nums.split(","):
+        for lap_number in lap_numbers:
             lap_rows = driver_laps[driver_laps["LapNumber"] == float(lap_number)]
             if lap_rows.empty:
                 continue
@@ -157,7 +198,7 @@ def get_lap_telemetry(year: int, round: int, identifier: str, selected_laps: str
             lap_time = pd.Timedelta(lap_row["LapTime"]).total_seconds() if pd.notna(lap_row["LapTime"]) else None
             result.append({
                 "driver": driver,
-                "lap_number": int(lap_number),
+                "lap_number": lap_number,
                 "lap_time": lap_time,
                 "channels": {
                     "time": car_data["Time"].dt.total_seconds().tolist(),

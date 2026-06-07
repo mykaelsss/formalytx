@@ -1,8 +1,14 @@
+import logging
+
 import fastf1
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 from fastf1.core import Session
 from dataclasses import dataclass
+
+from app.fastf1_loader import locked_load
+
+logger = logging.getLogger("uvicorn.error")
 
 @dataclass
 class SessionDetailConfig:
@@ -52,13 +58,13 @@ def get_results(year: int, round: int, identifier: str):
     session = fastf1.get_session(year, round, identifier)
     uid = identifier.upper()
     if uid in {"FP1", "FP2", "FP3"}:
-        session.load(laps=True, telemetry=False, weather=False, messages=False)
+        locked_load(session, year, round, identifier, laps=True, telemetry=False, weather=False, messages=False)
         return _practice_results(session)
     elif uid in {"Q", "SQ"}:
-        session.load(laps=True, telemetry=False, weather=False, messages=False)
+        locked_load(session, year, round, identifier, laps=True, telemetry=False, weather=False, messages=False)
         return _qualifying_results(session)
     else:
-        session.load(laps=False, telemetry=False, weather=False, messages=False)
+        locked_load(session, year, round, identifier, laps=False, telemetry=False, weather=False, messages=False)
         return _race_results(session)
 
 
@@ -200,7 +206,7 @@ def _format_lap_time(td) -> str | None:
 def get_podium(year: int, round: int):
     try:
         session = fastf1.get_session(year, round, 'R')
-        session.load(telemetry=False, weather=False, messages=False)
+        locked_load(session, year, round, 'R', telemetry=False, weather=False, messages=False)
         results = session.results
 
         # Normalise Position to numeric — older years may have strings or floats
@@ -246,7 +252,7 @@ def get_podium(year: int, round: int):
 def get_circuit_info(year: int, round: int, identifier: str = 'R'):
     try:
         session = fastf1.get_session(year, round, identifier)
-        session.load(laps=True, telemetry=True, weather=False, messages=False)
+        locked_load(session, year, round, identifier, laps=True, telemetry=True, weather=False, messages=False)
         circuit_info = session.get_circuit_info()
 
         sector_distances = []
@@ -265,8 +271,8 @@ def get_circuit_info(year: int, round: int, identifier: str = 'R'):
                             mask = tel_time >= t
                             if mask.any():
                                 sector_distances.append(float(tel.loc[mask.idxmax(), "Distance"]))
-        except Exception as e:
-            print(f"Error computing sector distances: {e}")
+        except Exception:
+            logger.exception("Error computing sector distances")
 
         return {
             "rotation": circuit_info.rotation,
@@ -365,7 +371,7 @@ def _get_round_sessions_detailed(event, year: int, round: int, config: SessionDe
 def _get_session_data(year: int, round: int, identifier: str, config: SessionDetailConfig):
     try:
         session = fastf1.get_session(year, round, identifier)
-        session.load(laps=config.laps, telemetry=False, messages=False, weather=config.weather)
+        locked_load(session, year, round, identifier, laps=config.laps, telemetry=False, messages=False, weather=config.weather)
 
         weather = None
         w = session.weather_data if config.weather else None
@@ -388,13 +394,13 @@ def _get_session_data(year: int, round: int, identifier: str, config: SessionDet
                     minutes = int(total // 60)
                     seconds = total % 60
                     fastest_lap = f"{minutes}:{seconds:06.3f}"
-            except Exception as e:
-                print(f"Error in _get_session_data trying to format lap time: {e}")
+            except Exception:
+                logger.exception("Error in _get_session_data trying to format lap time")
                 return None, None
 
         return weather, fastest_lap
-    except Exception as e:
-        print(f"Error in _get_session_data: {e}")
+    except Exception:
+        logger.exception("Error in _get_session_data")
         return None, None
 
 def _event_status(date):
