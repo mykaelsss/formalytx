@@ -28,16 +28,23 @@ ENV UV_NO_DEV=1
 # Ensure installed tools can be executed out of the box
 ENV UV_TOOL_BIN_DIR=/usr/local/bin
 
+# uv's cross-build download cache. Railway requires the cache-mount id be
+# "s/<service-id>-<target>"; pass it as a build arg so the id stays out of git.
+# Set UV_CACHE_ID as a Railway build variable.
+ARG UV_CACHE_ID
+
 # Install the project's dependencies using the lockfile and settings.
 # Copying only the lockfile + manifest first keeps this layer cached unless
 # they change, which is the dependency-caching benefit that actually matters.
 COPY uv.lock pyproject.toml ./
-RUN uv sync --locked --no-install-project
+RUN --mount=type=cache,id=${UV_CACHE_ID},target=/root/.cache/uv \
+    uv sync --locked --no-install-project
 
 # Then, add the rest of the project source code and install it
 # Installing separately from its dependencies allows optimal layer caching
 COPY . /app
-RUN uv sync --locked
+RUN --mount=type=cache,id=${UV_CACHE_ID},target=/root/.cache/uv \
+    uv sync --locked
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
