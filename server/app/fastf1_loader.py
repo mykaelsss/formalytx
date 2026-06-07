@@ -64,20 +64,33 @@ def locked_load(session, year: int, round: int, identifier, **load_kwargs):
     return session
 
 
+def _scandir_dirs(path: str):
+    """Yield sub-directory entries of `path`, skipping any we can't read.
+
+    A persistent-disk mount root (ext4) contains a root-owned `lost+found` we
+    can't descend into; tolerate that rather than crashing the whole walk.
+    """
+    try:
+        entries = list(os.scandir(path))
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if entry.is_dir():
+                yield entry
+        except OSError:
+            continue
+
+
 def _session_dirs(cache_dir: str) -> list[str]:
     """Leaf dirs of processed session data: cache_dir/<year>/<event>/<session>."""
     dirs: list[str] = []
     if not os.path.isdir(cache_dir):
         return dirs
-    for year in os.scandir(cache_dir):
-        if not year.is_dir():
-            continue
-        for event in os.scandir(year.path):
-            if not event.is_dir():
-                continue
-            for sess in os.scandir(event.path):
-                if sess.is_dir():
-                    dirs.append(sess.path)
+    for year in _scandir_dirs(cache_dir):
+        for event in _scandir_dirs(year.path):
+            for sess in _scandir_dirs(event.path):
+                dirs.append(sess.path)
     return dirs
 
 
