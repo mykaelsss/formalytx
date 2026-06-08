@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Footer() {
   return (
     <footer className="mt-auto border-t border-surface-border bg-surface-card">
@@ -10,6 +12,14 @@ export default function Footer() {
           images are proprietary trademarks of Formula One Licensing B.V. and/or the FIA. Use of
           these marks is not intended to imply any affiliation or endorsement. No commercial
           relationship is claimed or implied.
+        </p>
+        <p className="mt-4 text-center text-xs text-text-muted">
+          <Link
+            href="/privacy"
+            className="underline underline-offset-4 hover:text-text-secondary transition-colors"
+          >
+            Privacy Policy
+          </Link>
         </p>
       </div>
     </footer>
