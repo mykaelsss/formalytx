@@ -4,7 +4,7 @@ export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
 export default function Image() {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const baseUrl = process.env['NEXT_PUBLIC_APP_URL'] ?? "http://localhost:3000";
 
   return new ImageResponse(
     (
@@ -21,6 +21,7 @@ export default function Image() {
       >
         <img
           src={`${baseUrl}/formalytx_light.svg`}
+          alt="formalytx logo"
           width={120}
           height={77}
           style={{ marginBottom: 32 }}
