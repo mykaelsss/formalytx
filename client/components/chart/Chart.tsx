@@ -154,7 +154,7 @@ export default function Chart<T extends LegendItem>({
           ...s,
         })),
       },
-      true,
+      { replaceMerge: ["series"] },
     );
   }, [
     series,
@@ -267,7 +267,7 @@ export default function Chart<T extends LegendItem>({
       </div>
       <div className="relative w-full flex-1">
         <div ref={chartRef} className="w-full h-full" />
-        {isLoading && (
+        {isLoading && series.length === 0 && (
           <Skeleton className="absolute inset-0 rounded-none bg-surface-base" />
         )}
       </div>

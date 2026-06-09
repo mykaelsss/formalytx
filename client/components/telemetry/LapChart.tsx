@@ -162,6 +162,7 @@ export default function LapChart({ teams }: LapChartProps) {
       if (!driver) return [];
       const isSecondDriver = secondDrivers.has(d.abbreviation);
       return {
+        id: d.abbreviation,
         name: d.abbreviation,
         color: `#${driver.team_color}`,
         lineStyle: isSecondDriver
