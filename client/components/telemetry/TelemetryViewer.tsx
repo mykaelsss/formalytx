@@ -78,6 +78,12 @@ export default function TelemetryViewer() {
     [selectedLaps, router, pathname, searchParams],
   );
 
+  const clearLaps = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("laps");
+    router.replace(pathname + "?" + params.toString(), { scroll: false });
+  }, [router, pathname, searchParams]);
+
   const [prevLaps, setPrevLaps] = useState(laps);
   if (laps !== prevLaps) {
     setPrevLaps(laps);
@@ -407,8 +413,21 @@ export default function TelemetryViewer() {
       <div className="flex flex-col gap-4">
         <div className="border border-surface-border bg-surface-base flex flex-col items-start py-8 px-4 rounded-xs">
           <div className="w-full flex flex-col min-w-0 p-4 gap-4 overflow-hidden">
-            <div className="relative flex items-center justify-center py-0 pl-2 pr-5 gap-2">
-              <div className="flex flex-wrap gap-x-4 gap-y-2 w-full justify-center">
+            <div className="flex items-center justify-end gap-2 pl-2 pr-5 min-h-9">
+              {laps && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs cursor-pointer text-accent-green border-surface-border bg-surface-card py-4 rounded-none hover:bg-surface-card-hover hover:text-accent-green"
+                  onClick={clearLaps}
+                >
+                  <X size={8} aria-hidden="true" /> Clear Laps
+                </Button>
+              )}
+              <TelemetrySettingsPanel />
+            </div>
+            {(legendItems.length > 0 || pendingItems.length > 0) && (
+              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 pl-2 pr-5">
                 {legendItems.map((item) => {
                   const hidden = hiddenSeries.has(item.key);
                   const effectiveColor = customColors[item.key] ?? item.color;
@@ -479,8 +498,7 @@ export default function TelemetryViewer() {
                   );
                 })}
               </div>
-              <TelemetrySettingsPanel />
-            </div>
+            )}
             <div
               className="relative w-full border border-surface-border bg-surface-card"
               style={{ height: totalHeight }}
