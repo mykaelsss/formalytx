@@ -145,7 +145,11 @@ def prune_cache(cache_dir: str, high_water: float, low_water: float) -> None:
         usage = shutil.disk_usage(cache_dir)
     except OSError:
         return
-    if usage.total <= 0 or usage.used <= high_water * usage.total:
+    if usage.total <= 0:
+        return
+    frac = usage.used / usage.total
+    if frac <= high_water:
+        logger.info("cache disk %.2f used (high %.2f) - no prune", frac, high_water)
         return
     need = usage.used - int(low_water * usage.total)
 
