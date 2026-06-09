@@ -86,6 +86,11 @@ export default function SessionSidebar({
   const driverLaps = lapQueries.flatMap((q) => q.data ?? []);
   const isLoadingLaps = lapQueries.some((q) => q.isLoading);
 
+  const loadingDriverCodes = new Set<string>();
+  lapQueries.forEach((q, i) => {
+    if (q.isFetching) loadingDriverCodes.add(selectedDrivers[i]);
+  });
+
   const compareFastestLaps = () => {
     const byCode = new Map(driverLaps.map((d) => [d.abbreviation, d]));
     const entries: string[] = [];
@@ -224,19 +229,24 @@ export default function SessionSidebar({
                     {team?.drivers.map((d: Driver) => {
                       if (!d) return;
                       const active = selectedDrivers.includes(d.abbreviation);
+                      const loading = loadingDriverCodes.has(d.abbreviation);
                       return (
                         <button
                           type="button"
                           key={d.abbreviation}
                           onClick={() => toggleDriver(d.abbreviation)}
                           disabled={!d.participated}
+                          aria-busy={loading}
                           className={cn("flex-1 py-1 text-xs font-bold text-center relative overflow-hidden transition-colors",
                             (d.participated) ? 'cursor-pointer' : 'cursor-not-allowed opacity-80 line-through'
                           )}
                           style={{ color: active ? "#000" : "#555" }}
                         >
                           <span
-                            className="absolute left-0 top-0 bottom-0 transition-[width] duration-300 ease-in-out"
+                            className={cn(
+                              "absolute left-0 top-0 bottom-0 transition-[width] duration-300 ease-in-out",
+                              loading && "driver-fill-pulse",
+                            )}
                             style={{
                               width: active ? "100%" : "2px",
                               background: `#${team.color}`,

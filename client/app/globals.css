@@ -198,3 +198,25 @@
 .font-mono {
     font-feature-settings: "zero" 1;
 }
+
+/* Loading state on a driver button while its laps are fetched: a continuous
+   "breathing" pulse on the team-colour fill. */
+@keyframes driver-fill-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.driver-fill-pulse {
+  animation: driver-fill-pulse 1.1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .driver-fill-pulse {
+    animation-duration: 1.6s;
+  }
+}
