@@ -88,7 +88,7 @@ export default function SessionSidebar({
 
   const loadingDriverCodes = new Set<string>();
   lapQueries.forEach((q, i) => {
-    if (q.isFetching) loadingDriverCodes.add(selectedDrivers[i]);
+    if (q.isFetching && selectedDrivers[i]) loadingDriverCodes.add(selectedDrivers[i]);
   });
 
   const compareFastestLaps = () => {
