@@ -2,7 +2,8 @@ import { Compound, Lap, Team } from "@/lib/types";
 import TireBadge from "./TireBadge";
 import { Skeleton } from "../ui/skeleton";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
 import { toggleLap, parseSelectedLaps } from "@/lib/selectedLaps";
@@ -95,104 +96,154 @@ export default function LapTable({ teams }: LapTableProps) {
       });
   }, [visibleLaps]);
 
+  const rows = useMemo(() => {
+    const out: (
+      | { kind: "header"; lapNumber: number }
+      | {
+          kind: "lap";
+          lapNumber: number;
+          abbreviation: string;
+          lap: Lap;
+          fastest: number;
+        }
+    )[] = [];
+    for (const { lapNumber, entries, fastest } of lapsByNumber) {
+      out.push({ kind: "header", lapNumber });
+      for (const { abbreviation, lap } of entries) {
+        out.push({ kind: "lap", lapNumber, abbreviation, lap, fastest });
+      }
+    }
+    return out;
+  }, [lapsByNumber]);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (i) => (rows[i]?.kind === "header" ? 29 : 37),
+    overscan: 10,
+  });
+
   return (
-    <>
-      <div className="flex flex-col w-full text-xs overflow-y-auto max-h-125">
-        {lapsByNumber.map(({ lapNumber, entries, fastest }) => (
-          <div key={lapNumber} className="border-b border-surface-border">
-            <div className="flex items-center justify-between px-3 py-1.5 bg-surface-border/30">
-              <span className="font-bold tracking-widest text-text-secondary uppercase">
-                Lap {String(lapNumber).padStart(2, "0")}
-              </span>
-              <span className="text-text-muted text-[10px] tracking-wider uppercase">
-                INTERVAL
-              </span>
-            </div>
-            {entries.map(({ abbreviation, lap }) => {
-              const driver = driverMap.get(abbreviation);
-              const color = `#${driver?.team_color ?? "888888"}`;
-              const ms = lapTimeToMs(lap.lap_time);
-              const isFastestOverall = ms !== null && ms === overallFastest;
-              const isDriverBest =
-                ms !== null && ms === driverFastest.get(abbreviation);
-              const deltaMs =
-                ms !== null && fastest !== Infinity ? ms - fastest : null;
-              const isInvalid = lap.lap_time === null;
-              return (
-                <button
-                  type="button"
-                  key={abbreviation}
-                  className={cn(
-                    "w-full text-left flex items-center gap-3 px-3 py-2 border-b border-surface-border/40 last:border-0 cursor-pointer hover:bg-surface-card-hover transition-colors",
-                    isFastestOverall && "bg-purple-950/20",
-                    isDriverBest && !isFastestOverall && "bg-green-950/20",
-                    isInvalid && "opacity-40",
-                  )}
-                  onClick={() =>
-                    toggleLap(selectedLaps, abbreviation, lapNumber, {
-                      router,
-                      pathname: window.location.pathname,
-                      searchParams,
-                    })
-                  }
-                >
-                  <span
-                    className="size-2 rounded-full"
-                    style={{ background: color }}
-                  ></span>
-                  <span className="font-bold w-8 shrink-0" style={{ color }}>
-                    {abbreviation}
+    <div
+      ref={scrollRef}
+      className="w-full text-xs overflow-y-auto max-h-125"
+    >
+      <div
+        className="relative w-full"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
+        {virtualizer.getVirtualItems().map((vi) => {
+          const item = rows[vi.index];
+          if (!item) return null;
+          return (
+            <div
+              key={vi.key}
+              data-index={vi.index}
+              ref={virtualizer.measureElement}
+              className="absolute left-0 top-0 w-full"
+              style={{ transform: `translateY(${vi.start}px)` }}
+            >
+              {item.kind === "header" ? (
+                <div className="flex items-center justify-between px-3 py-1.5 bg-surface-border/30 border-b border-surface-border">
+                  <span className="font-bold tracking-widest text-text-secondary uppercase">
+                    Lap {String(item.lapNumber).padStart(2, "0")}
                   </span>
-                  <TireBadge
-                    compound={
-                      (lap.compound?.toUpperCase() ?? "HARD") as Compound
-                    }
-                    size={20}
-                    year={year}
-                  />
-                  <span
-                    className={cn(
-                      "flex-1 font-mono tabular-nums",
-                      isInvalid
-                        ? "text-text-disabled text-[10px]"
-                        : "text-text-primary",
-                    )}
-                  >
-                    {lap.lap_time ?? "—"}
+                  <span className="text-text-muted text-[10px] tracking-wider uppercase">
+                    INTERVAL
                   </span>
-                  {isFastestOverall ? (
-                    <span className="text-purple-400 font-bold text-[10px] tracking-wider">
-                      BEST
-                    </span>
-                  ) : isDriverBest ? (
-                    <span className="text-green-400 font-bold text-[10px] tracking-wider">
-                      PB
-                    </span>
-                  ) : deltaMs !== null && deltaMs > 0 ? (
-                    <span className="text-text-muted font-mono tabular-nums">
-                      {formatDelta(deltaMs)}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        ))}
-        {isLoadingLaps && (
-          <div className="border-b border-surface-border">
-            <div className="flex items-center justify-between px-3 py-1.5 bg-surface-card/50">
-              <Skeleton className="h-3 w-12 bg-text-disabled" />
+                </div>
+              ) : (
+                (() => {
+                  const { abbreviation, lap, lapNumber, fastest } = item;
+                  const driver = driverMap.get(abbreviation);
+                  const color = `#${driver?.team_color ?? "888888"}`;
+                  const ms = lapTimeToMs(lap.lap_time);
+                  const isFastestOverall = ms !== null && ms === overallFastest;
+                  const isDriverBest =
+                    ms !== null && ms === driverFastest.get(abbreviation);
+                  const deltaMs =
+                    ms !== null && fastest !== Infinity ? ms - fastest : null;
+                  const isInvalid = lap.lap_time === null;
+                  return (
+                    <button
+                      type="button"
+                      className={cn(
+                        "w-full text-left flex items-center gap-3 px-3 py-2 border-b border-surface-border/40 cursor-pointer hover:bg-surface-card-hover transition-colors",
+                        isFastestOverall && "bg-purple-950/20",
+                        isDriverBest && !isFastestOverall && "bg-green-950/20",
+                        isInvalid && "opacity-40",
+                      )}
+                      onClick={() =>
+                        toggleLap(selectedLaps, abbreviation, lapNumber, {
+                          router,
+                          pathname: window.location.pathname,
+                          searchParams,
+                        })
+                      }
+                    >
+                      <span
+                        className="size-2 rounded-full"
+                        style={{ background: color }}
+                      ></span>
+                      <span
+                        className="font-bold w-8 shrink-0"
+                        style={{ color }}
+                      >
+                        {abbreviation}
+                      </span>
+                      <TireBadge
+                        compound={
+                          (lap.compound?.toUpperCase() ?? "HARD") as Compound
+                        }
+                        size={20}
+                        year={year}
+                      />
+                      <span
+                        className={cn(
+                          "flex-1 font-mono tabular-nums",
+                          isInvalid
+                            ? "text-text-disabled text-[10px]"
+                            : "text-text-primary",
+                        )}
+                      >
+                        {lap.lap_time ?? "—"}
+                      </span>
+                      {isFastestOverall ? (
+                        <span className="text-purple-400 font-bold text-[10px] tracking-wider">
+                          BEST
+                        </span>
+                      ) : isDriverBest ? (
+                        <span className="text-green-400 font-bold text-[10px] tracking-wider">
+                          PB
+                        </span>
+                      ) : deltaMs !== null && deltaMs > 0 ? (
+                        <span className="text-text-muted font-mono tabular-nums">
+                          {formatDelta(deltaMs)}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })()
+              )}
             </div>
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-3 px-3 py-2">
-                <Skeleton className="size-5 rounded-full bg-text-disabled" />
-                <Skeleton className="h-3 w-8 bg-text-disabled" />
-                <Skeleton className="h-3 w-20 bg-text-disabled" />
-              </div>
-            ))}
-          </div>
-        )}
+          );
+        })}
       </div>
-    </>
+      {isLoadingLaps && (
+        <div className="border-b border-surface-border">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-surface-card/50">
+            <Skeleton className="h-3 w-12 bg-text-disabled" />
+          </div>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 px-3 py-2">
+              <Skeleton className="size-5 rounded-full bg-text-disabled" />
+              <Skeleton className="h-3 w-8 bg-text-disabled" />
+              <Skeleton className="h-3 w-20 bg-text-disabled" />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
