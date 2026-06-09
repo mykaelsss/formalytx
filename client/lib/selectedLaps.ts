@@ -20,7 +20,7 @@ export function parseSelectedLaps(laps: string): Map<string, number[]> {
 }
 
 type NavCtx = {
-  router: { push: (url: string) => void };
+  router: { push: (url: string, options?: { scroll?: boolean }) => void };
   pathname: string;
   searchParams: ReadonlyURLSearchParams;
 };
@@ -46,7 +46,7 @@ export function toggleLap(
 
   const params = new URLSearchParams(searchParams.toString());
   params.set("laps", lapsStr);
-  router.push(pathname + "?" + params.toString());
+  router.push(pathname + "?" + params.toString(), { scroll: false });
 
   if (idx === -1) {
     markLapAwaitingReview(seriesKey(driver, lapNumber));
