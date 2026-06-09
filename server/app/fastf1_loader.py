@@ -13,6 +13,8 @@ _locks: dict[tuple, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
 _active_cache_dir: str | None = None
+_prune_wake: threading.Event | None = None
+_high_water: float = 0.0
 
 
 def set_cache_dir(cache_dir: str) -> None:
@@ -61,7 +63,26 @@ def locked_load(session, year: int, round: int, identifier, **load_kwargs):
     leaf = _session_cache_dir(session)
     if leaf and os.path.isdir(leaf):
         _touch(leaf)
+    _maybe_wake_pruner()
     return session
+
+
+def _disk_used_fraction(cache_dir: str) -> float | None:
+    try:
+        usage = shutil.disk_usage(cache_dir)
+    except OSError:
+        return None
+    if usage.total <= 0:
+        return None
+    return usage.used / usage.total
+
+
+def _maybe_wake_pruner() -> None:
+    if _prune_wake is None or _high_water <= 0 or not _active_cache_dir:
+        return
+    used = _disk_used_fraction(_active_cache_dir)
+    if used is not None and used > _high_water:
+        _prune_wake.set()
 
 
 def _scandir_dirs(path: str):
@@ -117,54 +138,55 @@ def _evict_dir(path: str) -> None:
     shutil.rmtree(tmp, ignore_errors=True)
 
 
-def prune_cache(cache_dir: str, max_bytes: int, target_bytes: int) -> None:
-    """Evict least-recently-used processed session dirs when over max_bytes.
-
-    The sqlite http cache is left untouched — it's what protects us from the
-    rate-limited upstream, and processed pickles can be rebuilt from it for free.
-    """
-    if max_bytes <= 0:
+def prune_cache(cache_dir: str, high_water: float, low_water: float) -> None:
+    if high_water <= 0:
         return
+    try:
+        usage = shutil.disk_usage(cache_dir)
+    except OSError:
+        return
+    if usage.total <= 0 or usage.used <= high_water * usage.total:
+        return
+    need = usage.used - int(low_water * usage.total)
+
     entries = []
-    total = 0
     for path in _session_dirs(cache_dir):
         try:
             mtime = os.path.getmtime(path)
         except OSError:
             continue
-        size = _dir_size(path)
-        entries.append((mtime, size, path))
-        total += size
-    if total <= max_bytes:
-        return
+        entries.append((mtime, _dir_size(path), path))
 
-    entries.sort()  # oldest accessed first
+    entries.sort()
     freed = 0
     for _mtime, size, path in entries:
-        if total - freed <= target_bytes:
+        if freed >= need:
             break
         _evict_dir(path)
         freed += size
         logger.info("Pruned cached session %s (%d bytes)", path, size)
     logger.info(
-        "Cache prune freed %d bytes (%d -> %d, cap %d)",
-        freed, total, total - freed, max_bytes,
+        "Cache prune freed %d bytes (disk %d/%d, high %.2f, low %.2f)",
+        freed, usage.used, usage.total, high_water, low_water,
     )
 
 
-def start_pruner(cache_dir: str, max_bytes: int, target_bytes: int, interval: int) -> threading.Event:
-    """Run prune_cache once now, then on a background daemon timer. Returns a stop
-    Event the caller can set on shutdown."""
+def start_pruner(cache_dir: str, high_water: float, low_water: float, interval: int) -> threading.Event:
+    global _prune_wake, _high_water
     stop = threading.Event()
+    wake = threading.Event()
+    _prune_wake = wake
+    _high_water = high_water
 
     def _run():
         while not stop.is_set():
             try:
-                prune_cache(cache_dir, max_bytes, target_bytes)
+                prune_cache(cache_dir, high_water, low_water)
             except Exception:
                 logger.exception("Cache prune failed")
-            stop.wait(interval)
+            wake.wait(interval)
+            wake.clear()
 
-    if max_bytes > 0 and interval > 0:
+    if high_water > 0 and interval > 0:
         threading.Thread(target=_run, name="cache-pruner", daemon=True).start()
     return stop

@@ -43,8 +43,8 @@ async def lifespan(app: FastAPI):
       set_cache_dir(settings.fastf1_cache_dir)
       stop_pruner = start_pruner(
           settings.fastf1_cache_dir,
-          settings.cache_max_mb * 1024 * 1024,
-          settings.cache_prune_target_mb * 1024 * 1024,
+          settings.cache_high_water,
+          settings.cache_low_water,
           settings.cache_prune_interval_seconds,
       )
       try:
