@@ -426,8 +426,7 @@ export default function TelemetryViewer() {
               )}
               <TelemetrySettingsPanel />
             </div>
-            {(legendItems.length > 0 || pendingItems.length > 0) && (
-              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 pl-2 pr-5">
+            <div className="flex min-h-9 flex-wrap items-center justify-center gap-x-3 gap-y-2 pl-2 pr-5">
                 {legendItems.map((item) => {
                   const hidden = hiddenSeries.has(item.key);
                   const effectiveColor = customColors[item.key] ?? item.color;
@@ -498,7 +497,6 @@ export default function TelemetryViewer() {
                   );
                 })}
               </div>
-            )}
             <div
               className="relative w-full border border-surface-border bg-surface-card"
               style={{ height: totalHeight }}
