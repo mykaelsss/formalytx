@@ -139,8 +139,6 @@ export default function LapTable({ teams }: LapTableProps) {
           return (
             <div
               key={vi.key}
-              data-index={vi.index}
-              ref={virtualizer.measureElement}
               className="absolute left-0 top-0 w-full"
               style={{ transform: `translateY(${vi.start}px)` }}
             >
