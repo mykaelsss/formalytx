@@ -203,6 +203,7 @@ export function buildSeries(
         data,
         ...(channel === "gear" && { step: "end" as const }),
         ...(channel === "brake" && { step: "end" as const }),
+        channelIdx
       };
     }),
   );

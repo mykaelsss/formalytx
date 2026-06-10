@@ -35,10 +35,8 @@ import { useAsRef } from "@/hooks/use-as-ref";
 
 function resolveChannelSettings(
   ts: TelemetrySettings,
-  sIdx: number,
-  total: number,
+  chIdx: number,
 ) {
-  const chIdx = Math.floor(sIdx / Math.max(1, total / CHANNELS.length));
   const channel = CHANNELS[chIdx];
   return ts.useGlobalSettings
     ? ts.global
@@ -57,7 +55,6 @@ export default function TelemetryViewer() {
 
   const chartRef = useEcharts();
   const hoveredSeriesRef = useRef<string | null>(null);
-  const seriesRef = useRef<Array<{ name: string; id: string }>>([]);
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
   const [isZoomed, setIsZoomed] = useState(false);
   const [customColors, setCustomColors] = useState<Record<string, string>>({});
@@ -163,6 +160,8 @@ export default function TelemetryViewer() {
     error,
   } = useTelemetrySeries(telemetryData, circuitData, hiddenSeries, colorSlots);
 
+  const seriesRef = useAsRef(series);
+
   // Laps that loaded but don't share a distance range with the others are
   // dropped from the chart rather than failing it — surface each one so the
   // user knows why it isn't plotted.
@@ -214,12 +213,6 @@ export default function TelemetryViewer() {
       }
     }
   }, [legendItems, searchParams, pathname, router]);
-
-  // seriesRef is read synchronously by the settings/colors merge effects
-  // (whose deps don't include series), so it must stay in sync here.
-  useEffect(() => {
-    seriesRef.current = series;
-  }, [series]);
 
   useEffect(() => {
     if (!chartRef.current) return;
@@ -312,11 +305,10 @@ export default function TelemetryViewer() {
         },
 
         series: [
-          ...series.map((s, sIdx) => {
+          ...series.map((s) => {
             const ch = resolveChannelSettings(
               telemetrySettingsRef.current,
-              sIdx,
-              series.length,
+              s.channelIdx
             );
             return {
               showSymbol: ch.showSymbol,
@@ -348,7 +340,8 @@ export default function TelemetryViewer() {
     labelBySeries,
     refLapName,
     refTimes,
-    telemetrySettingsRef
+    telemetrySettingsRef,
+    customColorsRef
   ]);
 
   // Settings-only update — merge mode so zoom and chart structure are preserved
@@ -360,11 +353,10 @@ export default function TelemetryViewer() {
     if (!currentSeries.length) return;
     chart.setOption({
       series: [
-        ...currentSeries.map((s, sIdx) => {
+        ...currentSeries.map((s) => {
           const ch = resolveChannelSettings(
             telemetrySettings,
-            sIdx,
-            currentSeries.length,
+            s.channelIdx,
           );
           return {
             id: s.id,
@@ -378,7 +370,7 @@ export default function TelemetryViewer() {
         ...CHANNELS.map((_, i) => ({ id: `__markline_${i}` })),
       ],
     });
-  }, [telemetrySettings, chartRef]);
+  }, [telemetrySettings, chartRef, seriesRef]);
 
   // Color-only update — merge mode so zoom and chart structure are preserved
   useEffect(() => {
@@ -397,7 +389,7 @@ export default function TelemetryViewer() {
         ...CHANNELS.map((_, i) => ({ id: `__markline_${i}` })),
       ],
     });
-  }, [customColors, chartRef]);
+  }, [customColors, chartRef, seriesRef]);
 
   // Laps still fetching that aren't yet drawn — surfaced in the legend with a
   // spinner so the user sees a pending lap appear immediately on selection.
