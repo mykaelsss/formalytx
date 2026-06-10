@@ -16,7 +16,9 @@ export function parseSelectedLaps(laps: string): SelectedLap[] {
   for (const entry of laps.split("|")) {
     const [year, round, session, driver, lapsStr] = entry.split(":");
     if (!year || !round || !session || !driver || !lapsStr) continue;
-    for (const n of lapsStr.split(",").map(Number)) {
+    const lapNumbers = lapsStr.split(",").map(Number)
+    const uniqueLapNumbers = Array.from((new Set(lapNumbers)))
+    for (const n of uniqueLapNumbers) {
       if (!Number.isInteger(n) || n <= 0) continue;
       const lap = { year, round, session, driver, lap: n };
       const key = seriesKey(lap);
