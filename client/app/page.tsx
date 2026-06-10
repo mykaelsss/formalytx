@@ -6,6 +6,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import Marquee from "react-fast-marquee";
 
 export const metadata: Metadata = {
   title: "Formalytx · F1 Telemetry Explorer",
@@ -183,7 +184,7 @@ export default function Home() {
           style={{ maskImage: "radial-gradient(ellipse 90% 90% at 50% 0%, black 25%, transparent 75%)" }}
         />
         <div
-          className="absolute -top-44 right-[-12%] size-[520px] rounded-full pointer-events-none opacity-25"
+          className="absolute -top-44 right-[-12%] size-130 rounded-full pointer-events-none opacity-25"
           style={{ background: "radial-gradient(circle, var(--accent-green-dark), transparent 65%)" }}
         />
         <span
@@ -228,21 +229,11 @@ export default function Home() {
               <div className="flex flex-wrap items-center gap-3">
                 <Button
                   asChild
-                  className="rounded-none h-12 px-7 text-xs font-semibold uppercase tracking-[0.15em] cursor-pointer bg-accent-green text-black hover:bg-accent-green-hover [clip-path:polygon(0_0,100%_0,100%_calc(100%-12px),calc(100%-12px)_100%,0_100%)]"
+                  className="rounded-none h-12 px-7 text-xs font-semibold uppercase tracking-[0.15em] cursor-pointer bg-accent-green text-black hover:bg-accent-green-hover! [clip-path:polygon(0_0,100%_0,100%_calc(100%-12px),calc(100%-12px)_100%,0_100%)]"
                 >
                   <Link href="/telemetry">
                     Launch Explorer
                     <ArrowRight />
-                  </Link>
-                </Button>
-                <Button
-                  asChild
-                  variant="ghost"
-                  className="rounded-none h-12 px-5 text-xs font-semibold uppercase tracking-[0.15em] cursor-pointer text-text-secondary hover:text-text-primary"
-                >
-                  <Link href="https://docs.fastf1.dev" target="_blank" rel="noopener noreferrer">
-                    FastF1 Docs
-                    <ExternalLink />
                   </Link>
                 </Button>
               </div>
@@ -278,7 +269,7 @@ export default function Home() {
                   {channels.map((ch, i) => (
                     <div
                       key={ch.label}
-                      className={`flex flex-col gap-0.5 px-3 py-2.5 border-surface-border ${i > 0 ? "border-l" : ""} ${i >= 3 ? "max-sm:border-t max-sm:[&:nth-child(4)]:border-l-0" : ""}`}
+                      className={`flex flex-col gap-0.5 px-3 py-2.5 border-surface-border ${i > 0 ? "border-l" : ""} ${i >= 3 ? "max-sm:border-t max-sm:nth-4:border-l-0" : ""}`}
                     >
                       <span className="font-mono text-[9px] tracking-[0.2em] text-text-muted">{ch.label}</span>
                       <span className="font-mono text-xs text-text-primary tabular-nums">
@@ -299,12 +290,11 @@ export default function Home() {
 
       {/* ── Circuit ticker ── */}
       <section className="w-full border-b border-surface-border bg-surface-card/40 overflow-hidden select-none" aria-hidden>
-        <div className="marquee-track flex w-max items-center py-3">
-          {[0, 1].map((copy) => (
-            <div key={copy} className="flex items-center shrink-0">
+        <Marquee className="flex w-max items-center py-3" speed={60}>
+            <div className="flex items-center shrink-0">
               {circuits.map((circuit) => (
                 <span
-                  key={`${copy}-${circuit}`}
+                  key={circuit}
                   className="flex items-center font-mono text-[11px] tracking-[0.3em] uppercase text-text-muted"
                 >
                   <span className="px-6">{circuit}</span>
@@ -312,8 +302,7 @@ export default function Home() {
                 </span>
               ))}
             </div>
-          ))}
-        </div>
+        </Marquee>
       </section>
 
       {/* ── Step rail ── */}
@@ -408,10 +397,10 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
             <div className="flex flex-col gap-2">
               <span className="font-mono text-sm font-semibold text-accent-green">
-                import fastf1
+                FastF1
               </span>
               <p className="text-text-secondary text-sm leading-relaxed max-w-lg">
-                All session and telemetry data is sourced through{" "}
+                All data is sourced through{" "}
                 <span className="text-text-primary font-medium">FastF1</span> — an
                 open-source Python library built by{" "}
                 <span className="text-text-primary font-medium">Philipp Schaefer</span> and
@@ -421,8 +410,8 @@ export default function Home() {
 
             <Button
               asChild
-              variant="ghost"
-              className="rounded-none h-11 px-6 text-xs font-semibold uppercase tracking-[0.15em] cursor-pointer border border-surface-border text-text-secondary hover:text-accent-green shrink-0"
+              variant="outline"
+                className="text-xs cursor-pointer text-accent-green border-surface-border bg-surface-card p-4 h-11 rounded-none hover:bg-surface-card-hover hover:text-accent-green"
             >
               <Link href="https://docs.fastf1.dev" target="_blank" rel="noopener noreferrer">
                 FastF1 Docs
@@ -438,7 +427,7 @@ export default function Home() {
         <div className="kerb-stripe h-2.5 w-full opacity-80" aria-hidden />
         <Link
           href="/telemetry"
-          className="group relative block focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent-green"
+          className="group relative block focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-green"
         >
           <div
             className="landing-grid absolute inset-0 pointer-events-none"

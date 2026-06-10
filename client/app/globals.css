@@ -239,15 +239,6 @@
   animation: trace-draw 2.2s cubic-bezier(0.65, 0, 0.35, 1) forwards;
 }
 
-@keyframes marquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
-
-.marquee-track {
-  animation: marquee 48s linear infinite;
-}
-
 .kerb-stripe {
   background: repeating-linear-gradient(
     -45deg,
