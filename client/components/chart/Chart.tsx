@@ -73,6 +73,7 @@ export default function Chart<T extends LegendItem>({
         borderWidth: 1,
       },
       emphasis: {
+        scale: 1.5,
         itemStyle: { color: "inherit" },
         areaStyle: { color: "inherit" },
       },
@@ -185,43 +186,6 @@ export default function Chart<T extends LegendItem>({
     });
     return () => { chart.off("click"); };
   }, [onSeriesClick, chartRef]);
-
-  useEffect(() => {
-    if (!chartRef.current) return;
-    const chart = getInstanceByDom(chartRef.current);
-    if (!chart) return;
-
-    chart.on("mouseover", (params) => {
-      if (params.componentType !== "series") return;
-      const option = chart.getOption() as { series: { data: unknown[] }[] };
-      chart.setOption({
-        series: option.series.map((s, sIdx) => ({
-          data: s.data.map((d: unknown, dIdx: number) => {
-            const val = Array.isArray(d) ? d : (d as { value: unknown }).value;
-            const isTarget = sIdx === params.seriesIndex && dIdx === params.dataIndex;
-            return { value: val, symbolSize: isTarget ? settings.symbolSize * 1.5 : settings.symbolSize, z: isTarget ? 100 : 1 };
-          }),
-        })),
-      });
-    });
-
-    chart.on("mouseout", () => {
-      const option = chart.getOption() as { series: { data: unknown[] }[] };
-      chart.setOption({
-        series: option.series.map((s) => ({
-          data: s.data.map((d: unknown) => {
-            const val = Array.isArray(d) ? d : (d as { value: unknown }).value;
-            return { value: val, symbolSize: settings.symbolSize, z: 1 };
-          }),
-        })),
-      });
-    });
-
-    return () => {
-      chart.off("mouseover");
-      chart.off("mouseout");
-    };
-  }, [settings.symbolSize, chartRef]);
 
   useEffect(() => {
     if (!chartRef.current) return;
