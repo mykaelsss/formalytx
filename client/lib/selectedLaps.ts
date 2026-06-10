@@ -123,9 +123,8 @@ function addLap(
   router.push(pathname + "?" + params.toString(), { scroll: false });
 
   markLapAwaitingReview(key);
-  const viewParams = new URLSearchParams(params.toString());
-  viewParams.set("tab", "telemetry");
-  const viewUrl = pathname + "?" + viewParams.toString();
+  params.set("tab", "telemetry");
+  const viewUrl = pathname + "?" + params.toString();
   lapAddedToast(lap.driver, lap.lap, () => router.push(viewUrl));
 }
 
