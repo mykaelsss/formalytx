@@ -55,6 +55,8 @@ export default function SessionSidebar({
 
   const { data: schedule, isLoading: isLoadingSchedule } = useSchedule(year);
   const { data: roundSchedule, isLoading: isLoadingRound } = useRoundSchedule(year, round);
+  const sessionStatus = roundSchedule?.sessions.find((s) => s.identifier === session)?.status;
+  const staleTime = sessionStatus === "completed" ? Infinity : 60_000;
 
   const createQueryString = useCallback(
     (name: string, value: string) => {
@@ -90,7 +92,7 @@ export default function SessionSidebar({
     router.replace(pathname + "?" + params.toString(), { scroll: false });
   };
 
-  const { driverLaps, isLoading: isLoadingLaps, fetchingDrivers} = useSessionLaps(year, round, session, selectedDrivers);
+  const { driverLaps, isLoading: isLoadingLaps, fetchingDrivers} = useSessionLaps(year, round, session, selectedDrivers, staleTime);
 
   const compareFastestLaps = async () => {
     const byCode = new Map(driverLaps.map((d) => [d.abbreviation, d]));

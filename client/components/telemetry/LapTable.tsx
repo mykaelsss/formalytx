@@ -7,6 +7,7 @@ import { useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
+import { useRoundSchedule } from "@/lib/hooks/useRoundSchedule";
 import { toggleLap, parseSelectedLaps, isLapSelected } from "@/lib/selectedLaps";
 import { lapTimeToMs } from "@/lib/format";
 
@@ -35,7 +36,11 @@ export default function LapTable({ teams }: LapTableProps) {
 
   const selectedLaps = useMemo(() => parseSelectedLaps(laps), [laps]);
 
-  const { driverLaps, isLoading: isLoadingLaps } = useSessionLaps(year, round, session, selectedDrivers);
+  const { data: roundSchedule } = useRoundSchedule(year, round);
+  const sessionStatus = roundSchedule?.sessions.find((s) => s.identifier === session)?.status;
+  const staleTime = sessionStatus === "completed" ? Infinity : 60_000;
+
+  const { driverLaps, isLoading: isLoadingLaps } = useSessionLaps(year, round, session, selectedDrivers, staleTime);
 
   const visibleLaps = useMemo(
     () => driverLaps.filter((d) => selectedDrivers.includes(d.abbreviation)),

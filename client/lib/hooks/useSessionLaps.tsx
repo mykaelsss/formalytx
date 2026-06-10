@@ -8,6 +8,7 @@ export function useSessionLaps(
   round: string,
   session: string,
   drivers: string[],
+  staleTime: number = Infinity,
 ): {
   driverLaps: DriverLaps[],
   isLoading: boolean,
@@ -27,6 +28,7 @@ export function useSessionLaps(
       queryKey: ["sessionLaps", year, round, session, driver],
       queryFn: () => fetchSessionLaps(year, round, session, driver),
       enabled: !!year && !!round && !!session && !!driver,
+      staleTime,
     })),
     combine
   });

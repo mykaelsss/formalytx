@@ -10,6 +10,7 @@ import { useChartSettings } from "@/lib/hooks/useChartSettings";
 import { CHART_STORAGE_KEYS } from "@/lib/constants";
 import { toggleLap, parseSelectedLaps } from "@/lib/selectedLaps";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
+import { useRoundSchedule } from "@/lib/hooks/useRoundSchedule";
 import { useQueryClient } from "@tanstack/react-query";
 
 interface LapChartProps {
@@ -57,7 +58,11 @@ export default function LapChart({ teams }: LapChartProps) {
     [teams],
   );
 
-  const { driverLaps, isLoading: isLoadingLaps } = useSessionLaps(year, round, session, selectedDrivers)
+  const { data: roundSchedule } = useRoundSchedule(year, round);
+  const sessionStatus = roundSchedule?.sessions.find((s) => s.identifier === session)?.status;
+  const staleTime = sessionStatus === "completed" ? Infinity : 60_000;
+
+  const { driverLaps, isLoading: isLoadingLaps } = useSessionLaps(year, round, session, selectedDrivers, staleTime)
   
   const visibleLaps = useMemo(
     () => driverLaps.filter((d) => selectedDrivers.includes(d.abbreviation)),

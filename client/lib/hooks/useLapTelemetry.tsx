@@ -14,6 +14,7 @@ type FailedLap = SelectedLap & {
 export function useLapTelemetry(
   selectedLaps: SelectedLap[],
   enabled: boolean = true,
+  staleTime: number = Infinity,
 ): {
   data: LapTelemetryWithSession[];
   isPending: boolean;
@@ -49,6 +50,7 @@ export function useLapTelemetry(
       queryFn: () =>
         fetchLapTelemetry(l.year, l.round, l.session, `${l.driver}:${l.lap}`),
       enabled,
+      staleTime,
     })),
     combine,
   });

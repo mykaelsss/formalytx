@@ -51,7 +51,7 @@ export function isLapSelected(
 
 type SessionContext = { year: string; round: string; session: string };
 
-function circuitLocation(queryClient: QueryClient, ctx: SessionContext) {
+async function circuitLocation(queryClient: QueryClient, ctx: SessionContext) {
   return queryClient
     .fetchQuery({
       queryKey: ["session", ctx.year, ctx.round, ctx.session],
