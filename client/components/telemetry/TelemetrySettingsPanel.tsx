@@ -34,8 +34,9 @@ function ChannelSettingsForm({
   return (
     <div className="flex flex-col gap-4 text-sm">
       <div className="flex items-center justify-between">
-        <Label>Smooth Lines</Label>
+        <Label htmlFor="chart_smooth_lines">Smooth Lines</Label>
         <Switch
+          id="chart_smooth_lines"
           checked={settings.smooth}
           onCheckedChange={(v) => onChange({ ...settings, smooth: v })}
           className="cursor-pointer data-[state=checked]:bg-muted-foreground"

@@ -57,7 +57,7 @@ export default function ChartSettingsPanel({
                 />
               </div>
               <div className="flex items-center justify-between gap-2 w-full">
-                <Label htmlFor="chart_smooth">Show Symbols</Label>
+                <Label htmlFor="chart_smooth_symbol">Show Symbols</Label>
                 <Switch 
                 id="chart_show_symbol" 
                 checked={showSymbol} 
