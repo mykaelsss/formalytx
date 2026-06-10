@@ -2,7 +2,7 @@ import axios from "axios";
 import { CircuitInfo, DriverLaps, LapTelemetry, RoundSchedule, Schedule, TelemetrySession } from "./types";
 
 const api = axios.create({
-    baseURL: process.env['NEXT_PUBLIC_API_URL'] ?? "http://127.0.0.1:8000",
+    baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000",
 });
 
 export async function fetchSession(year: string, round: string, session: string) {
