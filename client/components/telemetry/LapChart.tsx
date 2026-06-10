@@ -57,11 +57,8 @@ export default function LapChart({ teams }: LapChartProps) {
     [teams],
   );
 
-  const lapQueries = useSessionLaps(year, round, session, selectedDrivers)
+  const { driverLaps, isLoading: isLoadingLaps } = useSessionLaps(year, round, session, selectedDrivers)
   
-    const driverLaps = lapQueries.flatMap(q => q.data ?? [])
-    const isLoadingLaps = lapQueries.some(q => q.isLoading)
-
   const visibleLaps = useMemo(
     () => driverLaps.filter((d) => selectedDrivers.includes(d.abbreviation)),
     [driverLaps, selectedDrivers],

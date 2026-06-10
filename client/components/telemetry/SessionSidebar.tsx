@@ -90,14 +90,7 @@ export default function SessionSidebar({
     router.replace(pathname + "?" + params.toString(), { scroll: false });
   };
 
-  const lapQueries = useSessionLaps(year, round, session, selectedDrivers);
-  const driverLaps = lapQueries.flatMap((q) => q.data ?? []);
-  const isLoadingLaps = lapQueries.some((q) => q.isLoading);
-
-  const loadingDriverCodes = new Set<string>();
-  lapQueries.forEach((q, i) => {
-    if (q.isFetching && selectedDrivers[i]) loadingDriverCodes.add(selectedDrivers[i]);
-  });
+  const { driverLaps, isLoading: isLoadingLaps, fetchingDrivers} = useSessionLaps(year, round, session, selectedDrivers);
 
   const compareFastestLaps = async () => {
     const byCode = new Map(driverLaps.map((d) => [d.abbreviation, d]));
@@ -267,7 +260,7 @@ export default function SessionSidebar({
                     {team?.drivers.map((d: Driver) => {
                       if (!d) return;
                       const active = selectedDrivers.includes(d.abbreviation);
-                      const loading = loadingDriverCodes.has(d.abbreviation);
+                      const loading = fetchingDrivers.has(d.abbreviation);
                       return (
                         <button
                           type="button"

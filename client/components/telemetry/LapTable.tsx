@@ -35,10 +35,7 @@ export default function LapTable({ teams }: LapTableProps) {
 
   const selectedLaps = useMemo(() => parseSelectedLaps(laps), [laps]);
 
-  const lapQueries = useSessionLaps(year, round, session, selectedDrivers);
-
-  const driverLaps = lapQueries.flatMap((q) => q.data ?? []);
-  const isLoadingLaps = lapQueries.some((q) => q.isLoading);
+  const { driverLaps, isLoading: isLoadingLaps } = useSessionLaps(year, round, session, selectedDrivers);
 
   const visibleLaps = useMemo(
     () => driverLaps.filter((d) => selectedDrivers.includes(d.abbreviation)),
