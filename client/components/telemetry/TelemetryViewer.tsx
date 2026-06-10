@@ -8,13 +8,21 @@ import { useCircuitInfo } from "@/lib/hooks/useCircuitInfo";
 import { EChartsOption, getInstanceByDom } from "echarts";
 import { useEcharts } from "@/lib/hooks/useEcharts";
 import { defaultTelemetryChannelSettings } from "@/lib/utils";
-import type { TelemetrySettings } from "@/lib/types";
+import type { Compound, SelectedLap, TelemetrySettings } from "@/lib/types";
 import { Loader2, X, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { consumeLapAwaitingReview, lapAddedToast, lapReadyToast } from "@/lib/toasts";
+import {
+  consumeLapAwaitingReview,
+  lapAddedToast,
+  lapReadyToast,
+} from "@/lib/toasts";
 import { parseSelectedLaps, toggleLap } from "@/lib/selectedLaps";
 import { seriesKey } from "@/lib/seriesKey";
+import { formatLapTime } from "@/lib/format";
+import { fetchSession } from "@/lib/api";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
+import TireBadge from "./TireBadge";
 import { allocateColorSlots, lapColor } from "@/lib/colors";
 import { useTelemetrySeries } from "@/lib/hooks/useTelemetrySeries";
 import TelemetrySettingsPanel from "./TelemetrySettingsPanel";
@@ -23,12 +31,6 @@ import { CHANNELS, GRID_GAP, GRID_HEIGHT } from "@/lib/constants";
 import { CHART_STRUCTURE } from "@/lib/chartStructure";
 import { buildTooltipFormatter } from "@/lib/buildTooltipFormatter";
 import { useToggleSeries } from "@/lib/hooks/useToggleSeries";
-
-function keysFromSelected(selected: Map<string, number[]>): string[] {
-  return Array.from(selected.entries()).flatMap(([driver, lapNumbers]) =>
-    lapNumbers.map((lap) => seriesKey(driver, lap)),
-  );
-}
 
 function resolveChannelSettings(
   ts: TelemetrySettings,
@@ -47,9 +49,9 @@ export default function TelemetryViewer() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const year = searchParams.get("year") ?? "";
   const round = searchParams.get("round") ?? "";
-  const session = searchParams.get("session") ?? "";
   const laps = searchParams.get("laps") ?? "";
 
   const chartRef = useEcharts();
@@ -60,7 +62,7 @@ export default function TelemetryViewer() {
   const [customColors, setCustomColors] = useState<Record<string, string>>({});
   const customColorsRef = useRef(customColors);
   const [colorSlots, setColorSlots] = useState<Record<string, number>>(() =>
-    allocateColorSlots({}, keysFromSelected(parseSelectedLaps(laps))),
+    allocateColorSlots({}, parseSelectedLaps(laps).map(seriesKey)),
   );
 
   const toggleSeries = useToggleSeries(hiddenSeries, setHiddenSeries, chartRef);
@@ -68,14 +70,15 @@ export default function TelemetryViewer() {
   const selectedLaps = useMemo(() => parseSelectedLaps(laps), [laps]);
 
   const removeLap = useCallback(
-    (driver: string, lapNumber: number) => {
-      toggleLap(selectedLaps, driver, lapNumber, {
+    (lap: SelectedLap) => {
+      toggleLap(selectedLaps, lap, {
         router,
         pathname,
         searchParams,
+        queryClient,
       });
     },
-    [selectedLaps, router, pathname, searchParams],
+    [selectedLaps, router, pathname, searchParams, queryClient],
   );
 
   const clearLaps = useCallback(() => {
@@ -87,7 +90,7 @@ export default function TelemetryViewer() {
   const [prevLaps, setPrevLaps] = useState(laps);
   if (laps !== prevLaps) {
     setPrevLaps(laps);
-    const orderedKeys = keysFromSelected(selectedLaps);
+    const orderedKeys = selectedLaps.map(seriesKey);
     const validKeys = new Set(orderedKeys);
     setColorSlots((prev) => allocateColorSlots(prev, orderedKeys));
     setCustomColors((prev) => {
@@ -106,12 +109,17 @@ export default function TelemetryViewer() {
   }
 
   const { data: circuitData } = useCircuitInfo(year, round);
-  const {data: telemetryData, isPending, failed, pending} = useLapTelemetry(year, round, session, selectedLaps);
+  const {
+    data: telemetryData,
+    isPending,
+    failed,
+    pending,
+  } = useLapTelemetry(selectedLaps);
 
   const shownToastsRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     if (shownToastsRef.current === null) return;
-    const current = new Set(failed.map((f) => `${f.driver}-${f.lap}`));
+    const current = new Set(failed.map((f) => seriesKey(f)));
     for (const key of shownToastsRef.current) {
       if (!current.has(key)) {
         toast.dismiss(`lap-fail-${key}`);
@@ -119,7 +127,7 @@ export default function TelemetryViewer() {
       }
     }
     for (const f of failed) {
-      const key = `${f.driver}-${f.lap}`;
+      const key = seriesKey(f);
       if (shownToastsRef.current.has(key)) continue;
       toast.error(`${f.driver} Lap ${f.lap} failed to load`, {
         id: `lap-fail-${key}`,
@@ -132,7 +140,7 @@ export default function TelemetryViewer() {
         },
         duration: Infinity,
         closeButton: true,
-        className: "border-accent-red!"
+        className: "border-accent-red!",
       });
       shownToastsRef.current.add(key);
     }
@@ -146,6 +154,7 @@ export default function TelemetryViewer() {
     series,
     markLineSeries,
     legendItems,
+    labelBySeries,
     deltaBySeries,
     commonStart,
     commonEnd,
@@ -160,7 +169,7 @@ export default function TelemetryViewer() {
   // user knows why it isn't plotted.
   const excludedToastsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const current = new Set(excluded.map((e) => `${e.driver}-${e.lap_number}`));
+    const current = new Set(excluded.map((e) => seriesKey(e)));
     for (const key of excludedToastsRef.current) {
       if (!current.has(key)) {
         toast.dismiss(`lap-excluded-${key}`);
@@ -168,11 +177,11 @@ export default function TelemetryViewer() {
       }
     }
     for (const e of excluded) {
-      const key = `${e.driver}-${e.lap_number}`;
+      const key = seriesKey(e);
       if (excludedToastsRef.current.has(key)) continue;
-      consumeLapAwaitingReview(seriesKey(e.driver, e.lap_number));
+      consumeLapAwaitingReview(key);
       toast.warning(
-        `${e.driver} Lap ${e.lap_number} doesn't overlap the other laps — excluded from comparison`,
+        `${e.driver} Lap ${e.lap} doesn't overlap the other laps — excluded from comparison`,
         {
           id: `lap-excluded-${key}`,
           duration: Infinity,
@@ -284,6 +293,7 @@ export default function TelemetryViewer() {
       commonStart,
       commonEnd,
       deltaBySeries,
+      labelBySeries,
       refLapName,
       refTimes,
       hoveredSeriesRef,
@@ -303,7 +313,11 @@ export default function TelemetryViewer() {
 
         series: [
           ...series.map((s, sIdx) => {
-            const ch = resolveChannelSettings(telemetrySettings, sIdx, series.length);
+            const ch = resolveChannelSettings(
+              telemetrySettings,
+              sIdx,
+              series.length,
+            );
             return {
               showSymbol: ch.showSymbol,
               symbol: ch.symbol,
@@ -331,6 +345,7 @@ export default function TelemetryViewer() {
     commonStart,
     commonEnd,
     deltaBySeries,
+    labelBySeries,
     refLapName,
     refTimes,
   ]);
@@ -392,10 +407,61 @@ export default function TelemetryViewer() {
   const pendingItems = useMemo(
     () =>
       pending
-        .map(({ driver, lap }) => ({ key: seriesKey(driver, lap), driver, lap }))
+        .map((p) => ({ ...p, key: seriesKey(p) }))
         .filter((p) => !loadedKeys.has(p.key)),
     [pending, loadedKeys],
   );
+
+  const sessionContexts = useMemo(() => {
+    const seen = new Map<
+      string,
+      { year: string; round: string; session: string }
+    >();
+    for (const item of [...legendItems, ...pendingItems]) {
+      const key = `${item.year}:${item.round}:${item.session}`;
+      if (!seen.has(key))
+        seen.set(key, {
+          year: item.year,
+          round: item.round,
+          session: item.session,
+        });
+    }
+    return Array.from(seen.values());
+  }, [legendItems, pendingItems]);
+
+  const sessionLabels = useQueries({
+    queries: sessionContexts.map((c) => ({
+      queryKey: ["session", c.year, c.round, c.session],
+      queryFn: () => fetchSession(c.year, c.round, c.session),
+    })),
+    combine: (results) =>
+      new Map(
+        sessionContexts.map((c, i) => {
+          const data = results[i]?.data;
+          return [
+            `${c.year}:${c.round}:${c.session}`,
+            data
+              ? `${c.year} · ${data.event_name} · ${data.name}`
+              : `${c.year} · Round ${c.round} · ${c.session}`,
+          ] as const;
+        }),
+      ),
+  });
+
+  const sessionLabelFor = (item: {
+    year: string;
+    round: string;
+    session: string;
+  }) =>
+    sessionLabels.get(`${item.year}:${item.round}:${item.session}`) ??
+    `${item.year} · Round ${item.round} · ${item.session}`;
+
+  const fastestSelectedTime = useMemo(() => {
+    const times = legendItems
+      .map((i) => i.lapTime)
+      .filter((t): t is number => t !== null);
+    return times.length ? Math.min(...times) : null;
+  }, [legendItems]);
 
   const totalHeight = CHANNELS.length * (GRID_HEIGHT + GRID_GAP) + GRID_GAP;
 
@@ -408,129 +474,218 @@ export default function TelemetryViewer() {
           ", ",
         )} plotted against lap distance.`;
 
+  const goToSession = () => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "session");
+    router.replace(pathname + "?" + params.toString(), { scroll: false });
+  };
+
   return (
-    <div className="bg-surface-base">
-      <div className="flex flex-col gap-4">
-        <div className="border border-surface-border bg-surface-base flex flex-col items-start py-8 px-4 rounded-xs">
-          <div className="w-full flex flex-col min-w-0 p-4 gap-4 overflow-hidden">
-            <div className="flex items-center justify-end gap-2 pl-2 pr-5 min-h-9">
-              {laps && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-xs cursor-pointer text-accent-green border-surface-border bg-surface-card py-4 rounded-none hover:bg-surface-card-hover hover:text-accent-green"
-                  onClick={clearLaps}
-                >
-                  <X size={8} aria-hidden="true" /> Clear Laps
-                </Button>
-              )}
-              <TelemetrySettingsPanel />
-            </div>
-            <div className="flex min-h-9 flex-wrap items-center justify-center gap-x-3 gap-y-2 pl-2 pr-5">
-                {legendItems.map((item) => {
-                  const hidden = hiddenSeries.has(item.key);
-                  const effectiveColor = customColors[item.key] ?? item.color;
-                  return (
-                    <div
-                      key={item.key}
-                      className="group flex items-center gap-2 rounded-full border border-surface-border bg-surface-card py-1 pl-2 pr-1 transition-opacity"
-                      style={{ opacity: hidden ? 0.3 : 1 }}
-                    >
-                      <ColorSwatch
-                        color={effectiveColor}
-                        label={`Change color for ${item.driver} Lap ${item.lap}`}
-                        onCommit={(c) =>
-                          setCustomColors((prev) => ({
-                            ...prev,
-                            [item.key]: c,
-                          }))
-                        }
-                      />
-                      <button
-                        type="button"
-                        aria-pressed={!hidden}
-                        aria-label={`${hidden ? "Show" : "Hide"} ${item.driver} Lap ${item.lap} in chart`}
-                        onClick={() => toggleSeries(item.key)}
-                        className={`text-xs text-text-muted cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
-                          hidden ? "line-through" : ""
-                        }`}
-                      >
-                        {item.driver} Lap {item.lap}
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Remove ${item.driver} Lap ${item.lap}`}
-                        title={`Remove ${item.driver} Lap ${item.lap}`}
-                        onClick={() => removeLap(item.driver, item.lap)}
-                        className="flex size-5 items-center justify-center rounded-full text-text-muted cursor-pointer outline-none transition-colors hover:bg-accent-red/15 hover:text-accent-red focus-visible:ring-2 focus-visible:ring-accent-red/50"
-                      >
-                        <X size={12} aria-hidden="true" />
-                      </button>
-                    </div>
-                  );
-                })}
-                {pendingItems.map((item) => {
-                  const color =
-                    customColors[item.key] ??
-                    lapColor(colorSlots[item.key] ?? 0);
-                  return (
-                    <output
-                      key={item.key}
-                      aria-live="polite"
-                      className="flex items-center gap-2 rounded-full border border-surface-border bg-surface-card py-1 pl-2 pr-3"
-                      style={{ opacity: 0.6 }}
-                    >
-                      <span
-                        className="size-3 rounded-full"
-                        style={{ backgroundColor: color }}
-                        aria-hidden="true"
-                      />
-                      <span className="text-xs text-text-muted">
-                        {item.driver} Lap {item.lap}
-                      </span>
-                      <Loader2
-                        className="animate-spin text-text-muted"
-                        size={12}
-                        aria-label={`Loading ${item.driver} Lap ${item.lap}`}
-                      />
-                    </output>
-                  );
-                })}
-              </div>
-            <div
-              className="relative w-full border border-surface-border bg-surface-card"
-              style={{ height: totalHeight }}
-            >
-              <div
-                ref={chartRef}
-                role="img"
-                aria-label={chartAriaLabel}
-                className="w-full h-full"
-              />
-              {isPending && telemetryData.length === 0 && (
-                <output
-                  aria-live="polite"
-                  className="absolute inset-0 flex items-center justify-center gap-2 text-sm text-text-muted"
-                >
-                  <Loader2 className="animate-spin" size={16} aria-hidden="true" />
-                  Loading telemetry…
-                </output>
-              )}
-            </div>
-            <div className="flex justify-end pl-2 pr-5 min-h-9 -translate-y-2">
-              {isZoomed && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-xs cursor-pointer text-accent-green border-surface-border bg-surface-card py-4 rounded-none hover:bg-surface-card-hover hover:text-accent-green"
-                  onClick={resetZoom}
-                >
-                  <ZoomOut size={8} aria-hidden="true" /> Reset Zoom
-                </Button>
-              )}
-            </div>
-          </div>
+    <div className="w-full flex flex-col border border-surface-border bg-surface-card">
+      <div className="flex sm:flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2 border-b border-surface-border">
+        <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.2em] uppercase text-text-muted">
+          <span
+            className={
+              legendItems.length > 0
+                ? "size-1.5 rounded-full bg-accent-green animate-pulse shrink-0"
+                : "size-1.5 rounded-full bg-surface-border shrink-0"
+            }
+          />
+          Telemetry trace · Distance (m)
         </div>
+        <div className="flex items-center gap-3">
+          {laps && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="font-mono text-[10px] tracking-[0.15em] uppercase cursor-pointer text-accent-green rounded-none hover:bg-surface-card-hover hover:text-accent-green"
+              onClick={clearLaps}
+            >
+              <X className="size-3.5 self-center" aria-hidden="true" />
+              <span className="h-3.5">Clear Laps</span>
+            </Button>
+          )}
+          <TelemetrySettingsPanel />
+        </div>
+      </div>
+      {(legendItems.length > 0 || pendingItems.length > 0) && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-4 py-3 border-b border-surface-border">
+          {legendItems.map((item) => {
+            const hidden = hiddenSeries.has(item.key);
+            const effectiveColor = customColors[item.key] ?? item.color;
+            const delta =
+              item.lapTime !== null && fastestSelectedTime !== null
+                ? item.lapTime - fastestSelectedTime
+                : null;
+            return (
+              <div
+                key={item.key}
+                className="group flex w-full min-w-0 flex-col gap-1.5 border px-2.5 py-2 transition-opacity sm:w-auto sm:max-w-xs"
+                style={{
+                  opacity: hidden ? 0.4 : 1,
+                  borderColor: effectiveColor,
+                  background: `color-mix(in oklch, ${effectiveColor} 8%, transparent)`,
+                }}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <span className="min-w-0 font-mono text-[9px] leading-snug tracking-[0.15em] uppercase text-text-muted">
+                    {sessionLabelFor(item)}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${item.driver} Lap ${item.lap}`}
+                    title={`Remove ${item.driver} Lap ${item.lap}`}
+                    onClick={() => removeLap(item)}
+                    className="-mr-1 flex size-5 shrink-0 items-center justify-center text-text-muted cursor-pointer outline-none transition-colors hover:bg-accent-red/15 hover:text-accent-red focus-visible:ring-2 focus-visible:ring-accent-red/50"
+                  >
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <ColorSwatch
+                    color={effectiveColor}
+                    label={`Change color for ${item.driver} Lap ${item.lap}`}
+                    onCommit={(c) =>
+                      setCustomColors((prev) => ({
+                        ...prev,
+                        [item.key]: c,
+                      }))
+                    }
+                  />
+                  <button
+                    type="button"
+                    aria-pressed={!hidden}
+                    aria-label={`${hidden ? "Show" : "Hide"} ${item.driver} Lap ${item.lap} in chart`}
+                    onClick={() => toggleSeries(item.key)}
+                    className={`font-mono text-[11px] font-semibold tracking-wider uppercase text-text-secondary cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
+                      hidden ? "line-through" : ""
+                    }`}
+                  >
+                    {item.driver} · LAP {item.lap}
+                  </button>
+                  {item.compound && (
+                    <span className="ml-auto flex items-center gap-1.5 pl-3">
+                      <TireBadge
+                        compound={item.compound.toUpperCase() as Compound}
+                        size={16}
+                        year={item.year}
+                      />
+                      {item.tyreLife !== null && (
+                        <span className="font-mono text-[9px] tracking-[0.1em] uppercase text-text-muted whitespace-nowrap">
+                          {item.tyreLife} lap{item.tyreLife === 1 ? "" : "s"}{" "}
+                          old
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-baseline gap-2 font-mono tabular-nums">
+                  <span className="text-sm font-bold text-text-primary">
+                    {formatLapTime(item.lapTime)}
+                  </span>
+                  {delta !== null && delta > 0 && (
+                    <span className="text-[10px] text-accent-red">
+                      +{delta.toFixed(3)}s
+                    </span>
+                  )}
+                  {delta === 0 && legendItems.length > 1 && (
+                    <span className="text-[9px] tracking-[0.15em] uppercase text-accent-green">
+                      Fastest
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {pendingItems.map((item) => {
+            const color =
+              customColors[item.key] ?? lapColor(colorSlots[item.key] ?? 0);
+            return (
+              <output
+                key={item.key}
+                aria-live="polite"
+                className="flex w-full min-w-0 flex-col gap-1.5 border px-2.5 py-2 sm:w-auto sm:max-w-xs"
+                style={{
+                  opacity: 0.6,
+                  borderColor: color,
+                  background: `color-mix(in oklch, ${color} 8%, transparent)`,
+                }}
+              >
+                <span className="min-w-0 font-mono text-[9px] leading-snug tracking-[0.15em] uppercase text-text-muted">
+                  {sessionLabelFor(item)}
+                </span>
+                <span className="flex items-center gap-2">
+                  <span
+                    className="size-3 rounded-full"
+                    style={{ backgroundColor: color }}
+                    aria-hidden="true"
+                  />
+                  <span className="font-mono text-[11px] font-semibold tracking-wider uppercase text-text-muted">
+                    {item.driver} · L{item.lap}
+                  </span>
+                  <Loader2
+                    className="animate-spin text-text-muted"
+                    size={12}
+                    aria-label={`Loading ${item.driver} Lap ${item.lap}`}
+                  />
+                </span>
+              </output>
+            );
+          })}
+        </div>
+      )}
+      <div className="relative w-full" style={{ height: totalHeight }}>
+        <div
+          ref={chartRef}
+          role="img"
+          aria-label={chartAriaLabel}
+          className="w-full h-full"
+        />
+        {isPending && telemetryData.length === 0 && (
+          <output
+            aria-live="polite"
+            className="absolute inset-0 flex items-center justify-center gap-2 text-sm text-text-muted"
+          >
+            <Loader2 className="animate-spin" size={16} aria-hidden="true" />
+            Loading telemetry…
+          </output>
+        )}
+        {!isPending &&
+          telemetryData.length === 0 &&
+          pendingItems.length === 0 && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center px-4 bg-surface-card">
+              <span className="font-mono text-[10px] tracking-[0.25em] uppercase text-text-secondary">
+                No laps selected
+              </span>
+              <p className="text-sm text-text-secondary max-w-xs">
+                Pick laps from the timing sheet, or compare fastest laps from
+                the session panel.
+              </p>
+              <button
+                type="button"
+                onClick={goToSession}
+                className="mt-1 cursor-pointer font-mono text-[10px] font-semibold tracking-[0.2em] uppercase px-5 py-2.5 bg-accent-green text-black hover:bg-accent-green-hover transition-colors [clip-path:polygon(0_0,100%_0,100%_calc(100%-10px),calc(100%-10px)_100%,0_100%)]"
+              >
+                ← Pick laps in session
+              </button>
+            </div>
+          )}
+      </div>
+      <div className="flex items-center justify-end px-4 min-h-10 border-t border-surface-border">
+        {isZoomed ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="font-mono text-[10px] tracking-[0.15em] uppercase cursor-pointer text-accent-green rounded-none hover:bg-surface-card-hover hover:text-accent-green"
+            onClick={resetZoom}
+          >
+            <ZoomOut className="size-3!" aria-hidden="true" /> Reset Zoom
+          </Button>
+        ) : (
+          <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-text-muted">
+            Scroll to zoom · Hover for sector + corner data
+          </span>
+        )}
       </div>
     </div>
   );

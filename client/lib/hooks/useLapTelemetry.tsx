@@ -1,52 +1,54 @@
 import { useQueries, type UseQueryResult } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useCallback } from "react";
 import { fetchLapTelemetry } from "../api";
-import type { LapTelemetry } from "../types";
+import type {
+  LapTelemetry,
+  LapTelemetryWithSession,
+  SelectedLap,
+} from "../types";
 
-type FailedLap = {
-  driver: string;
-  lap: number;
+type FailedLap = SelectedLap & {
   refetch: UseQueryResult<LapTelemetry[], Error>["refetch"];
 };
 
 export function useLapTelemetry(
-  year: string,
-  round: string,
-  session: string,
-  selectedLaps: Map<string, number[]>,
+  selectedLaps: SelectedLap[],
   enabled: boolean = true,
 ): {
-  data: LapTelemetry[];
+  data: LapTelemetryWithSession[];
   isPending: boolean;
   failed: FailedLap[];
-  pending: { driver: string; lap: number }[];
+  pending: SelectedLap[];
 } {
-  const entries = useMemo(
-    () =>
-      Array.from(selectedLaps.entries()).flatMap(([driver, laps]) =>
-        laps.map((lap) => ({ driver, lap })),
-      ),
+  const combine = useCallback(
+    (results: UseQueryResult<LapTelemetry[], Error>[]) => ({
+      data: results.flatMap((r, i) => {
+        const entry = selectedLaps[i];
+        if (!entry) return [];
+        return (r.data ?? []).map((lap) => ({
+          ...lap,
+          year: entry.year,
+          round: entry.round,
+          session: entry.session,
+        }));
+      }),
+      isPending: results.some((r) => r.isPending),
+      failed: selectedLaps.reduce<FailedLap[]>((acc, entry, i) => {
+        if (results[i]?.isError)
+          acc.push({ ...entry, refetch: results[i]!.refetch });
+        return acc;
+      }, []),
+      pending: selectedLaps.filter((_, i) => results[i]?.isPending),
+    }),
     [selectedLaps],
   );
 
-  const combine = useCallback(
-    (results: UseQueryResult<LapTelemetry[], Error>[]) => ({
-      data: results.flatMap((r) => r.data ?? []),
-      isPending: results.some((r) => r.isPending),
-      failed: entries.reduce<FailedLap[]>((acc, entry, i) => {
-        if (results[i]?.isError) acc.push({ ...entry, refetch: results[i]!.refetch });
-        return acc;
-      }, []),
-      pending: entries.filter((_, i) => results[i]?.isPending),
-    }),
-    [entries],
-  );
-
   return useQueries({
-    queries: entries.map(({ driver, lap }) => ({
-      queryKey: ["lapTelemetry", year, round, session, driver, lap],
-      queryFn: () => fetchLapTelemetry(year, round, session, `${driver}:${lap}`),
-      enabled: enabled && !!year && !!round && !!session,
+    queries: selectedLaps.map((l) => ({
+      queryKey: ["lapTelemetry", l.year, l.round, l.session, l.driver, l.lap],
+      queryFn: () =>
+        fetchLapTelemetry(l.year, l.round, l.session, `${l.driver}:${l.lap}`),
+      enabled,
     })),
     combine,
   });

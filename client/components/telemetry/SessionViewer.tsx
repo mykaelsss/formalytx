@@ -73,29 +73,29 @@ export default function SessionViewer() {
 
   return (
     <div className={cn(
-      "border border-surface-border bg-surface-base flex flex-col lg:flex-row items-start min-h-120 py-8 px-4 rounded-xs",
-      sidebarOpen ? "gap-4" : "max-lg:gap-4"
+      "flex flex-col lg:flex-row items-start min-h-120",
+      sidebarOpen ? "gap-5" : "max-lg:gap-5"
       )}>
       <m.div
         animate={{
-          width: sidebarOpen ? 208 : 0,
+          width: sidebarOpen ? 224 : 0,
           opacity: sidebarOpen ? 1 : 0,
         }}
         transition={{ type: "tween", duration: 0.35, ease: "easeInOut" }}
         className={cn(
           "max-lg:w-full! max-lg:opacity-100! overflow-hidden lg:border-r lg:border-surface-border",
-          sidebarOpen && "lg:pr-4",
+          sidebarOpen && "lg:pr-5",
         )}
       >
         <SessionSidebar loadingSession={isLoadingSession} teams={teams} />
       </m.div>
-      <div className="flex-1 w-full flex flex-col min-w-0 gap-4 overflow-hidden">
+      <div className="flex-1 w-full flex flex-col min-w-0 gap-5 overflow-hidden">
         <button
           type="button"
           onClick={() => setSidebarOpen((o) => !o)}
-          className="self-start text-text-muted hover:text-text-primary transition-colors text-xs hidden lg:inline cursor-pointer"
+          className="self-start font-mono text-[10px] tracking-[0.2em] uppercase text-text-muted hover:text-accent-green transition-colors hidden lg:inline cursor-pointer"
         >
-          {sidebarOpen ? "← Hide" : "→ Show"}
+          {sidebarOpen ? "← Hide panel" : "→ Show panel"}
         </button>
         <LapChart teams={teams} />
         <LapTable

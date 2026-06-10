@@ -47,7 +47,7 @@ export function computeDelta(
   });
 }
 
-export function fastestLap(laps: LapTelemetry[]): LapTelemetry {
+export function fastestLap<T extends LapTelemetry>(laps: T[]): T {
   return laps.reduce((best, lap) => {
     const t = lap.lap_time ?? Infinity;
     const bt = best.lap_time ?? Infinity;

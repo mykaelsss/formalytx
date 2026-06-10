@@ -11,6 +11,7 @@ type TooltipContext = {
   commonStart: number;
   commonEnd: number;
   deltaBySeries: Map<string, number[]>;
+  labelBySeries: Map<string, string>;
   refLapName: string;
   refTimes: number[];
   hoveredSeriesRef: { current: number | null };
@@ -23,6 +24,7 @@ export function buildTooltipFormatter({
   commonStart,
   commonEnd,
   deltaBySeries,
+  labelBySeries,
   refLapName,
   refTimes,
   hoveredSeriesRef,
@@ -89,7 +91,7 @@ export function buildTooltipFormatter({
           return deltas[idx] ?? 0;
         };
         let html = header(currentDistance);
-        html += `<div class="flex items-center text-xs font-semibold text-text-secondary mb-1">${marker(s?.color ?? "#888")}${format.encodeHTML(lapName)}</div>`;
+        html += `<div class="flex items-center text-xs font-semibold text-text-secondary mb-1">${marker(s?.color ?? "#888")}${format.encodeHTML(labelBySeries.get(lapName) ?? lapName)}</div>`;
         const isRef = lapName === refLapName;
         const refTimeAtDistance = () => {
           const times = refTimes;
@@ -152,7 +154,7 @@ export function buildTooltipFormatter({
         : channel && formatChannelVal(channel, p.value[1]);
       html +=
         `<div class="flex justify-between gap-6 text-xs leading-relaxed">` +
-        `<div class="flex items-center">${marker(p.color)}<span class="text-text-secondary">${format.encodeHTML(p.seriesName)}</span></div>` +
+        `<div class="flex items-center">${marker(p.color)}<span class="text-text-secondary">${format.encodeHTML(labelBySeries.get(p.seriesName) ?? p.seriesName)}</span></div>` +
         `<span class="text-text-primary font-mono">${valStr}</span></div>`;
     }
     return html;

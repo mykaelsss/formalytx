@@ -21,6 +21,8 @@ type LegendItem = {
 interface ChartProps<T extends LegendItem> {
   series: LineSeriesOption[];
   storageKey?: string;
+  title?: string;
+  emptyHint?: string;
   tooltipFormatter?: (params: TopLevelFormatterParams) => string;
   yAxisFormatter?: (val: number) => string;
   legendItems?: T[];
@@ -32,6 +34,8 @@ interface ChartProps<T extends LegendItem> {
 export default function Chart<T extends LegendItem>({
   series,
   storageKey = "lap_chart_settings",
+  title,
+  emptyHint,
   tooltipFormatter,
   yAxisFormatter,
   legendItems,
@@ -137,7 +141,7 @@ export default function Chart<T extends LegendItem>({
             verticalAlignMaxLabel: "top",
             formatter: yAxisFormatter,
           },
-          min: (value: { min: number; max: number }) => Math.floor(value.min),
+          min: (value: { min: number; max: number }) => Math.floor(value.min ?? 0),
           max: (value: { min: number; max: number }) => Math.ceil(value.max),
         },
         tooltip: {
@@ -246,41 +250,69 @@ export default function Chart<T extends LegendItem>({
 
   return (
     <div className="w-full h-120 flex flex-col border border-surface-border bg-surface-card">
-      <div className="relative flex items-center justify-center py-4 pl-2 pr-5 gap-2">
-        <div className="flex flex-wrap gap-x-4 gap-y-2 w-full justify-center">
-          {legendItems?.map((item) => {
-            const hidden = hiddenSeries.has(item.key);
-            return (
-              <button
-                type="button"
-                key={item.key}
-                onClick={() => toggleSeries(item.key)}
-                className="flex items-center gap-2 cursor-pointer"
-                style={{ opacity: hidden ? 0.3 : 1 }}
-              >
-                {renderLegendItem(item, { hidden })}
-              </button>
-            );
-          })}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5 border-b border-surface-border">
+        <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.2em] uppercase text-text-muted">
+          <span
+            className={
+              series.length > 0
+                ? "size-1.5 rounded-full bg-accent-green animate-pulse shrink-0"
+                : "size-1.5 rounded-full bg-surface-border shrink-0"
+            }
+          />
+          {title ?? "Chart"}
         </div>
-        <ChartSettingsPanel settings={settings} setSettings={updateSettings} />
+        <div className="flex items-center gap-4">
+          <div className="flex flex-wrap gap-x-4 gap-y-2 justify-end">
+            {legendItems?.map((item) => {
+              const hidden = hiddenSeries.has(item.key);
+              return (
+                <button
+                  type="button"
+                  key={item.key}
+                  onClick={() => toggleSeries(item.key)}
+                  className="flex items-center gap-2 cursor-pointer"
+                  style={{ opacity: hidden ? 0.3 : 1 }}
+                >
+                  {renderLegendItem(item, { hidden })}
+                </button>
+              );
+            })}
+          </div>
+          <ChartSettingsPanel settings={settings} setSettings={updateSettings} />
+        </div>
       </div>
-      <div className="relative w-full flex-1">
+      <div className="relative w-full flex-1 p-3">
         <div ref={chartRef} className="w-full h-full" />
         {isLoading && series.length === 0 && (
-          <Skeleton className="absolute inset-0 rounded-none bg-surface-base" />
+          <Skeleton className="absolute inset-3 rounded-none bg-surface-base" />
+        )}
+        {!isLoading && series.length === 0 && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center px-4 pointer-events-none">
+            <span className="font-mono text-[10px] tracking-[0.25em] uppercase text-text-secondary">
+              No data plotted
+            </span>
+            {emptyHint && (
+              <p className="text-sm text-text-secondary max-w-xs">{emptyHint}</p>
+            )}
+          </div>
         )}
       </div>
-      <div className="flex justify-end pl-2 pr-5 min-h-9 -translate-y-2">
-        {isZoomed && (
+      <div className="flex items-center justify-end px-4 min-h-10 border-t border-surface-border">
+        {isZoomed ? (
           <Button
             size="sm"
-            variant="outline"
-            className="text-xs cursor-pointer text-accent-green border-surface-border bg-surface-card py-4 rounded-none hover:bg-surface-card-hover hover:text-accent-green"
+            variant="ghost"
+            className="font-mono text-[10px] tracking-[0.15em] uppercase cursor-pointer text-accent-green rounded-none hover:bg-surface-card-hover hover:text-accent-green"
             onClick={resetZoom}
           >
-            <ZoomOut size={8} /> Reset Zoom
+            <ZoomOut className="size-3!" /> Reset Zoom
           </Button>
+        ) : (
+          <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-text-muted">
+            {onSeriesClick
+              ? "Scroll to zoom · Click a point to add its lap"
+              : "Scroll to zoom"}
+          </span>
         )}
       </div>
     </div>

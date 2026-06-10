@@ -10,6 +10,7 @@ import { useChartSettings } from "@/lib/hooks/useChartSettings";
 import { CHART_STORAGE_KEYS } from "@/lib/constants";
 import { toggleLap, parseSelectedLaps } from "@/lib/selectedLaps";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface LapChartProps {
   teams: Team[];
@@ -38,6 +39,7 @@ export default function LapChart({ teams }: LapChartProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const year = searchParams.get("year") ?? "";
   const round = searchParams.get("round") ?? "";
   const session = searchParams.get("session") ?? "";
@@ -194,11 +196,17 @@ export default function LapChart({ teams }: LapChartProps) {
   const selectedLaps = useMemo(() => parseSelectedLaps(laps), [laps]);
 
   const handleSeriesClick = useCallback(({ seriesName, value }: { seriesName: string; value: [number, number] }) => {
-    toggleLap(selectedLaps, seriesName, value[0], { router, pathname, searchParams });
-  }, [selectedLaps, pathname, router, searchParams]);
+    toggleLap(
+      selectedLaps,
+      { year, round, session, driver: seriesName, lap: value[0] },
+      { router, pathname, searchParams, queryClient },
+    );
+  }, [selectedLaps, year, round, session, pathname, router, searchParams, queryClient]);
 
   return (
     <Chart
+      title="Lap times · Time vs lap"
+      emptyHint="Select drivers from the panel to plot their lap times."
       tooltipFormatter={tooltipFormatter}
       yAxisFormatter={(val: number) => secondsToLapTime(val, 0)}
       storageKey={CHART_STORAGE_KEYS.lapChart}
@@ -216,7 +224,7 @@ export default function LapChart({ teams }: LapChartProps) {
                 : settings.firstDriverLineStyle,
             }}
           />
-          <span className="text-xs text-text-muted">
+          <span className="font-mono text-[10px] tracking-wider text-text-secondary">
             {item.driver.abbreviation}
           </span>
         </>

@@ -1,17 +1,16 @@
-import type { CircuitInfo, LapTelemetry } from "./types";
+import type { CircuitInfo, LapTelemetryWithSession, SelectedLap } from "./types";
 import { CHANNELS, SAMPLE_COUNT } from "./constants";
 import { lapColor } from "./colors";
 import { interp, linspace, sampleLap } from "./interp";
 import { computeDelta } from "./delta";
-import { seriesKey } from "./seriesKey";
+import { seriesKey, telemetryToSelected } from "./seriesKey";
 
-type ExcludedLap = { driver: string; lap_number: number };
-
-function emptyTelemetry(error: string | null, excluded: ExcludedLap[] = []) {
+function emptyTelemetry(error: string | null, excluded: SelectedLap[] = []) {
   return {
     series: [],
     markLineSeries: [],
     legendItems: [],
+    labelBySeries: new Map<string, string>(),
     deltaBySeries: new Map<string, number[]>(),
     commonStart: 0,
     commonEnd: 0,
@@ -23,8 +22,8 @@ function emptyTelemetry(error: string | null, excluded: ExcludedLap[] = []) {
 }
 
 export function buildSeries(
-  telemetryData: LapTelemetry[],
-  refLap: LapTelemetry | null,
+  telemetryData: LapTelemetryWithSession[],
+  refLap: LapTelemetryWithSession | null,
   circuitData: CircuitInfo | undefined,
   colorSlots: Record<string, number> = {},
 ) {
@@ -33,7 +32,7 @@ export function buildSeries(
   }
 
   const ref = refLap;
-  const refLapName = seriesKey(ref.driver, ref.lap_number);
+  const refLapName = seriesKey(telemetryToSelected(ref));
 
   const ranges = telemetryData.map((lap) => ({
     lap,
@@ -77,11 +76,11 @@ export function buildSeries(
     }
   }
 
-  const kept: LapTelemetry[] = [];
-  const excluded: ExcludedLap[] = [];
+  const kept: LapTelemetryWithSession[] = [];
+  const excluded: SelectedLap[] = [];
   for (const iv of intervals) {
     if (covers(iv, stab)) kept.push(iv.lap);
-    else excluded.push({ driver: iv.lap.driver, lap_number: iv.lap.lap_number });
+    else excluded.push(telemetryToSelected(iv.lap));
   }
 
   const commonStart = Math.max(...kept.map((l) => l.channels.distance[0]!));
@@ -134,9 +133,23 @@ export function buildSeries(
   ];
 
   const lapEntries = kept.map((lap, i) => {
-    const name = seriesKey(lap.driver, lap.lap_number);
+    const name = seriesKey(telemetryToSelected(lap));
     return { lap, name, color: lapColor(colorSlots[name] ?? i) };
   });
+
+  // Tooltip labels: driver + lap is enough while every plotted lap comes from
+  // one session; once sessions mix, the label must say which event each lap
+  // belongs to or identical driver/lap pairs become indistinguishable.
+  const singleSession =
+    new Set(kept.map((l) => `${l.year}:${l.round}:${l.session}`)).size <= 1;
+  const labelBySeries = new Map(
+    lapEntries.map(({ lap, name }) => [
+      name,
+      singleSession
+        ? `${lap.driver} - Lap ${lap.lap_number}`
+        : `${lap.driver} - Lap ${lap.lap_number} · ${lap.year} R${lap.round} ${lap.session}`,
+    ]),
+  );
 
   const deltaBySeries = new Map<string, number[]>();
   for (const { lap, name } of lapEntries) {
@@ -199,12 +212,19 @@ export function buildSeries(
     color,
     driver: lap.driver,
     lap: lap.lap_number,
+    lapTime: lap.lap_time,
+    compound: lap.compound ?? null,
+    tyreLife: lap.tyre_life ?? null,
+    year: lap.year,
+    round: lap.round,
+    session: lap.session,
   }));
 
   return {
     series,
     markLineSeries,
     legendItems,
+    labelBySeries,
     deltaBySeries,
     commonStart,
     commonEnd,

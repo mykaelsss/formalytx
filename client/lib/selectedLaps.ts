@@ -1,61 +1,153 @@
 import type { ReadonlyURLSearchParams } from "next/navigation";
+import type { QueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   consumeLapAwaitingReview,
   lapAddedToast,
   markLapAwaitingReview,
 } from "./toasts";
 import { seriesKey } from "./seriesKey";
+import { fetchSession } from "./api";
+import type { SelectedLap } from "./types";
 
-export function parseSelectedLaps(laps: string): Map<string, number[]> {
-  return laps.split("|").reduce((map, entry) => {
-    const [driver, lapsStr] = entry.split(":");
-    if (!driver || !lapsStr) return map;
-    const lapNumbers = lapsStr
-      .split(",")
-      .map(Number)
-      .filter((n) => Number.isInteger(n) && n > 0);
-    if (lapNumbers.length) map.set(driver, lapNumbers);
-    return map;
-  }, new Map<string, number[]>());
+export function parseSelectedLaps(laps: string): SelectedLap[] {
+  const selected: SelectedLap[] = [];
+  const seen = new Set<string>();
+  for (const entry of laps.split("|")) {
+    const [year, round, session, driver, lapsStr] = entry.split(":");
+    if (!year || !round || !session || !driver || !lapsStr) continue;
+    for (const n of lapsStr.split(",").map(Number)) {
+      if (!Number.isInteger(n) || n <= 0) continue;
+      const lap = { year, round, session, driver, lap: n };
+      const key = seriesKey(lap);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      selected.push(lap);
+    }
+  }
+  return selected;
+}
+
+export function serializeSelectedLaps(selected: SelectedLap[]): string {
+  const groups = new Map<string, number[]>();
+  for (const l of selected) {
+    const gk = `${l.year}:${l.round}:${l.session}:${l.driver}`;
+    const laps = groups.get(gk);
+    if (laps) laps.push(l.lap);
+    else groups.set(gk, [l.lap]);
+  }
+  return Array.from(groups.entries())
+    .map(([gk, laps]) => `${gk}:${laps.join(",")}`)
+    .join("|");
+}
+
+export function isLapSelected(
+  selected: SelectedLap[],
+  lap: SelectedLap,
+): boolean {
+  const key = seriesKey(lap);
+  return selected.some((l) => seriesKey(l) === key);
+}
+
+type SessionContext = { year: string; round: string; session: string };
+
+function circuitLocation(queryClient: QueryClient, ctx: SessionContext) {
+  return queryClient
+    .fetchQuery({
+      queryKey: ["session", ctx.year, ctx.round, ctx.session],
+      queryFn: () => fetchSession(ctx.year, ctx.round, ctx.session),
+      staleTime: Infinity,
+    })
+    .then((data) => data.location);
+}
+
+export async function ensureSameCircuit(
+  queryClient: QueryClient,
+  existing: SelectedLap[],
+  ctx: SessionContext,
+  onRemoveAndContinue: (sameCircuitLaps: SelectedLap[]) => void,
+): Promise<boolean> {
+  const otherEvents = new Map<string, SelectedLap>();
+  for (const l of existing) {
+    if (l.year === ctx.year && l.round === ctx.round) continue;
+    otherEvents.set(`${l.year}:${l.round}`, l);
+  }
+  if (otherEvents.size === 0) return true;
+  let mismatched: Set<string>;
+  try {
+    const target = await circuitLocation(queryClient, ctx);
+    const entries = Array.from(otherEvents.entries());
+    const locations = await Promise.all(
+      entries.map(([, l]) => circuitLocation(queryClient, l)),
+    );
+    mismatched = new Set(
+      entries.filter((_, i) => locations[i] !== target).map(([k]) => k),
+    );
+  } catch {
+    return true;
+  }
+  if (mismatched.size === 0) return true;
+  const kept = existing.filter((l) => !mismatched.has(`${l.year}:${l.round}`));
+  toast.error("Laps from different circuits can't be compared", {
+    id: "circuit-mismatch",
+    className: "border-accent-red! flex-wrap! gap-y-2!",
+    classNames: {
+      actionButton:
+        "basis-full! justify-center! text-center! bg-transparent! border! border-accent-red-dark! text-accent-red-dark! hover:bg-accent-red-dark/10! font-mono uppercase tracking-[0.15em]",
+    },
+    action: {
+      label: "Remove old laps & add this one",
+      onClick: () => onRemoveAndContinue(kept),
+    },
+  });
+  return false;
 }
 
 type NavCtx = {
   router: { push: (url: string, options?: { scroll?: boolean }) => void };
   pathname: string;
   searchParams: ReadonlyURLSearchParams;
+  queryClient: QueryClient;
 };
 
-export function toggleLap(
-  selectedLaps: Map<string, number[]>,
-  driver: string,
-  lapNumber: number,
+function addLap(
+  selected: SelectedLap[],
+  lap: SelectedLap,
   { router, pathname, searchParams }: NavCtx,
 ) {
-  const currentLaps = selectedLaps.get(driver) ?? [];
-  const idx = currentLaps.indexOf(lapNumber);
-  const newLaps =
-    idx === -1
-      ? [...currentLaps, lapNumber]
-      : currentLaps.filter((_, i) => i !== idx);
-  const updated = new Map(selectedLaps);
-  if (newLaps.length) updated.set(driver, newLaps);
-  else updated.delete(driver);
-  const lapsStr = Array.from(updated.entries())
-    .map(([d, ls]) => `${d}:${ls.join(",")}`)
-    .join("|");
-
+  const key = seriesKey(lap);
   const params = new URLSearchParams(searchParams.toString());
-  params.set("laps", lapsStr);
+  params.set("laps", serializeSelectedLaps([...selected, lap]));
   router.push(pathname + "?" + params.toString(), { scroll: false });
 
-  if (idx === -1) {
-    markLapAwaitingReview(seriesKey(driver, lapNumber));
-    const viewParams = new URLSearchParams(searchParams.toString());
-    viewParams.set("laps", lapsStr);
-    viewParams.set("tab", "telemetry");
-    const viewUrl = pathname + "?" + viewParams.toString();
-    lapAddedToast(driver, lapNumber, () => router.push(viewUrl));
-  } else {
-    consumeLapAwaitingReview(seriesKey(driver, lapNumber));
+  markLapAwaitingReview(key);
+  const viewParams = new URLSearchParams(params.toString());
+  viewParams.set("tab", "telemetry");
+  const viewUrl = pathname + "?" + viewParams.toString();
+  lapAddedToast(lap.driver, lap.lap, () => router.push(viewUrl));
+}
+
+export async function toggleLap(
+  selected: SelectedLap[],
+  lap: SelectedLap,
+  ctx: NavCtx,
+) {
+  const key = seriesKey(lap);
+  const exists = selected.some((l) => seriesKey(l) === key);
+
+  if (exists) {
+    const updated = selected.filter((l) => seriesKey(l) !== key);
+    const lapsStr = serializeSelectedLaps(updated);
+    const params = new URLSearchParams(ctx.searchParams.toString());
+    if (lapsStr) params.set("laps", lapsStr);
+    else params.delete("laps");
+    ctx.router.push(ctx.pathname + "?" + params.toString());
+    consumeLapAwaitingReview(key);
+    return;
   }
+
+  const ok = await ensureSameCircuit(ctx.queryClient, selected, lap, (kept) =>
+    addLap(kept, lap, ctx),
+  );
+  if (ok) addLap(selected, lap, ctx);
 }

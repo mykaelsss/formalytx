@@ -200,6 +200,8 @@ def get_lap_telemetry(year: int, round: int, identifier: str, selected_laps: str
                 "driver": driver,
                 "lap_number": lap_number,
                 "lap_time": lap_time,
+                "compound": str(lap_row.get("Compound", "")) or None,
+                "tyre_life": int(lap_row["TyreLife"]) if pd.notna(lap_row.get("TyreLife")) else None,
                 "channels": {
                     "time": car_data["Time"].dt.total_seconds().tolist(),
                     "speed": car_data["Speed"].tolist(),

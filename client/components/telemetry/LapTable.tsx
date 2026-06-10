@@ -2,11 +2,12 @@ import { Compound, Lap, Team } from "@/lib/types";
 import TireBadge from "./TireBadge";
 import { Skeleton } from "../ui/skeleton";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
-import { toggleLap, parseSelectedLaps } from "@/lib/selectedLaps";
+import { toggleLap, parseSelectedLaps, isLapSelected } from "@/lib/selectedLaps";
 import { lapTimeToMs } from "@/lib/format";
 
 function formatDelta(ms: number): string {
@@ -20,6 +21,7 @@ interface LapTableProps {
 export default function LapTable({ teams }: LapTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const year = searchParams.get("year") ?? "";
   const round = searchParams.get("round") ?? "";
   const session = searchParams.get("session") ?? "";
@@ -117,133 +119,188 @@ export default function LapTable({ teams }: LapTableProps) {
   }, [lapsByNumber]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  //directDomUpdates should work with react compiler. Ignore warning for now.
+  // eslint-disable-next-line react-hooks/incompatible-library -- opted out of memoization via "use no memo"
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: (i) => (rows[i]?.kind === "header" ? 29 : 37),
-    overscan: 10,
+    overscan: 5,
+    directDomUpdates: true,
   });
 
   return (
-    <div
-      ref={scrollRef}
-      className="w-full text-xs overflow-y-auto max-h-125"
-    >
-      <div
-        className="relative w-full"
-        style={{ height: virtualizer.getTotalSize() }}
-      >
-        {virtualizer.getVirtualItems().map((vi) => {
-          const item = rows[vi.index];
-          if (!item) return null;
-          return (
-            <div
-              key={vi.key}
-              data-index={vi.index}
-              ref={virtualizer.measureElement}
-              className="absolute left-0 top-0 w-full"
-              style={{ transform: `translateY(${vi.start}px)` }}
-            >
-              {item.kind === "header" ? (
-                <div className="flex items-center justify-between px-3 py-1.5 bg-surface-border/30 border-b border-surface-border">
-                  <span className="font-bold tracking-widest text-text-secondary uppercase">
-                    Lap {String(item.lapNumber).padStart(2, "0")}
-                  </span>
-                  <span className="text-text-muted text-[10px] tracking-wider uppercase">
-                    INTERVAL
-                  </span>
-                </div>
-              ) : (
-                (() => {
-                  const { abbreviation, lap, lapNumber, fastest } = item;
-                  const driver = driverMap.get(abbreviation);
-                  const color = `#${driver?.team_color ?? "888888"}`;
-                  const ms = lapTimeToMs(lap.lap_time);
-                  const isFastestOverall = ms !== null && ms === overallFastest;
-                  const isDriverBest =
-                    ms !== null && ms === driverFastest.get(abbreviation);
-                  const deltaMs =
-                    ms !== null && fastest !== Infinity ? ms - fastest : null;
-                  const isInvalid = lap.lap_time === null;
-                  return (
-                    <button
-                      type="button"
-                      className={cn(
-                        "w-full text-left flex items-center gap-3 px-3 py-2 border-b border-surface-border/40 cursor-pointer hover:bg-surface-card-hover transition-colors",
-                        isFastestOverall && "bg-purple-950/20",
-                        isDriverBest && !isFastestOverall && "bg-green-950/20",
-                        isInvalid && "opacity-40",
-                      )}
-                      onClick={() =>
-                        toggleLap(selectedLaps, abbreviation, lapNumber, {
-                          router,
-                          pathname: window.location.pathname,
-                          searchParams,
-                        })
-                      }
-                    >
-                      <span
-                        className="size-2 rounded-full"
-                        style={{ background: color }}
-                      ></span>
-                      <span
-                        className="font-bold w-8 shrink-0"
-                        style={{ color }}
-                      >
-                        {abbreviation}
-                      </span>
-                      <TireBadge
-                        compound={
-                          (lap.compound?.toUpperCase() ?? "HARD") as Compound
-                        }
-                        size={20}
-                        year={year}
-                      />
-                      <span
-                        className={cn(
-                          "flex-1 font-mono tabular-nums",
-                          isInvalid
-                            ? "text-text-disabled text-[10px]"
-                            : "text-text-primary",
-                        )}
-                      >
-                        {lap.lap_time ?? "—"}
-                      </span>
-                      {isFastestOverall ? (
-                        <span className="text-purple-400 font-bold text-[10px] tracking-wider">
-                          BEST
-                        </span>
-                      ) : isDriverBest ? (
-                        <span className="text-green-400 font-bold text-[10px] tracking-wider">
-                          PB
-                        </span>
-                      ) : deltaMs !== null && deltaMs > 0 ? (
-                        <span className="text-text-muted font-mono tabular-nums">
-                          {formatDelta(deltaMs)}
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })()
-              )}
-            </div>
-          );
-        })}
+    <div className="w-full border border-surface-border bg-surface-card flex flex-col">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2.5 border-b border-surface-border">
+        <span className="font-mono text-[10px] tracking-[0.2em] uppercase text-text-muted">
+          Timing sheet
+        </span>
+        <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-text-muted">
+          Click a lap → add to telemetry
+        </span>
       </div>
-      {isLoadingLaps && (
-        <div className="border-b border-surface-border">
-          <div className="flex items-center justify-between px-3 py-1.5 bg-surface-card/50">
-            <Skeleton className="h-3 w-12 bg-text-disabled" />
-          </div>
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 px-3 py-2">
-              <Skeleton className="size-5 rounded-full bg-text-disabled" />
-              <Skeleton className="h-3 w-8 bg-text-disabled" />
-              <Skeleton className="h-3 w-20 bg-text-disabled" />
-            </div>
-          ))}
+      <div
+        ref={scrollRef}
+        className="relative w-full text-xs overflow-y-auto max-h-125"
+      >
+        <div
+          ref={virtualizer.containerRef}
+          className="relative w-full"
+        >
+          {virtualizer.getVirtualItems().map((vi) => {
+            const item = rows[vi.index];
+            if (!item) return null;
+            return (
+              <div
+                key={vi.key}
+                data-index={vi.index}
+                ref={virtualizer.measureElement}
+                className="absolute left-0 top-0 w-full"
+                style={{ transform: `translateY(${vi.start}px)` }}
+              >
+                {item.kind === "header" ? (
+                  <div className="flex items-center justify-between px-4 py-1.5 bg-surface-border/30 border-b border-surface-border">
+                    <span className="font-mono font-bold text-[10px] tracking-[0.2em] text-text-secondary uppercase tabular-nums">
+                      Lap {String(item.lapNumber).padStart(2, "0")}
+                    </span>
+                    <span className="font-mono text-text-muted text-[9px] tracking-[0.2em] uppercase">
+                      Interval
+                    </span>
+                  </div>
+                ) : (
+                  (() => {
+                    const { abbreviation, lap, lapNumber, fastest } = item;
+                    const driver = driverMap.get(abbreviation);
+                    const color = `#${driver?.team_color ?? "888888"}`;
+                    const ms = lapTimeToMs(lap.lap_time);
+                    const isFastestOverall = ms !== null && ms === overallFastest;
+                    const isDriverBest =
+                      ms !== null && ms === driverFastest.get(abbreviation);
+                    const deltaMs =
+                      ms !== null && fastest !== Infinity ? ms - fastest : null;
+                    const isInvalid = lap.lap_time === null;
+                    const isOnChart = isLapSelected(selectedLaps, {
+                      year,
+                      round,
+                      session,
+                      driver: abbreviation,
+                      lap: lapNumber,
+                    });
+                    return (
+                      <button
+                        type="button"
+                        aria-pressed={isOnChart}
+                        className={cn(
+                          "group relative w-full text-left flex items-center gap-3 px-4 py-2 border-b border-surface-border/40 last:border-0 cursor-pointer hover:bg-surface-card-hover transition-colors",
+                          isFastestOverall && "bg-data-violet/10",
+                          isDriverBest && !isFastestOverall && "bg-accent-green/5",
+                          isInvalid && "opacity-40",
+                        )}
+                        onClick={() =>
+                          toggleLap(
+                            selectedLaps,
+                            {
+                              year,
+                              round,
+                              session,
+                              driver: abbreviation,
+                              lap: lapNumber,
+                            },
+                            {
+                              router,
+                              pathname: window.location.pathname,
+                              searchParams,
+                              queryClient,
+                            },
+                          )
+                        }
+                      >
+                        {isOnChart && (
+                          <span className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent-green" />
+                        )}
+                        <span
+                          className="size-2 rounded-full shrink-0"
+                          style={{ background: color }}
+                        ></span>
+                        <span
+                          className="font-mono font-bold w-9 shrink-0"
+                          style={{ color }}
+                        >
+                          {abbreviation}
+                        </span>
+                        <TireBadge
+                          compound={
+                            (lap.compound?.toUpperCase() ?? "HARD") as Compound
+                          }
+                          size={20}
+                          year={year}
+                        />
+                        <span
+                          className={cn(
+                            "flex-1 font-mono tabular-nums",
+                            isInvalid
+                              ? "text-text-disabled text-[10px]"
+                              : "text-text-primary",
+                          )}
+                        >
+                          {lap.lap_time ?? "—"}
+                        </span>
+                        {isFastestOverall ? (
+                          <span className="text-data-violet font-mono font-bold text-[10px] tracking-[0.15em]">
+                            BEST
+                          </span>
+                        ) : isDriverBest ? (
+                          <span className="text-accent-green font-mono font-bold text-[10px] tracking-[0.15em]">
+                            PB
+                          </span>
+                        ) : deltaMs !== null && deltaMs > 0 ? (
+                          <span className="text-text-muted font-mono tabular-nums">
+                            {formatDelta(deltaMs)}
+                          </span>
+                        ) : null}
+                        <span
+                          className={cn(
+                            "font-mono text-[9px] tracking-[0.15em] w-14 text-right shrink-0 transition-opacity max-sm:hidden",
+                            isOnChart
+                              ? "text-accent-green"
+                              : "text-text-muted opacity-0 group-hover:opacity-100",
+                          )}
+                        >
+                          {isOnChart ? "● ADDED" : "+ ADD"}
+                        </span>
+                      </button>
+                    );
+                  })()
+                )}
+              </div>
+            );
+          })}
         </div>
-      )}
+        {!isLoadingLaps && lapsByNumber.length === 0 && (
+          <div className="flex flex-col items-center justify-center gap-2 py-14 text-center px-4">
+            <span className="font-mono text-[10px] tracking-[0.25em] uppercase text-text-muted">
+              No laps loaded
+            </span>
+            <p className="text-sm text-text-secondary max-w-xs">
+              Select a session and drivers to populate the timing sheet.
+            </p>
+          </div>
+        )}
+        {isLoadingLaps && (
+          <div className="border-b border-surface-border">
+            <div className="flex items-center justify-between px-4 py-1.5 bg-surface-card/50">
+              <Skeleton className="h-3 w-12 bg-text-disabled" />
+            </div>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 py-2">
+                <Skeleton className="size-5 rounded-full bg-text-disabled" />
+                <Skeleton className="h-3 w-8 bg-text-disabled" />
+                <Skeleton className="h-3 w-20 bg-text-disabled" />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

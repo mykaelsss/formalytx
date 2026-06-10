@@ -78,7 +78,23 @@ export type LapTelemetry = {
   driver: string,
   lap_number: number,
   lap_time: number | null,
+  compound?: string | null,
+  tyre_life?: number | null,
   channels: LapChannels
+}
+
+export type LapTelemetryWithSession = LapTelemetry & {
+  year: string
+  round: string
+  session: string
+}
+
+export type SelectedLap = {
+  year: string
+  round: string
+  session: string
+  driver: string
+  lap: number
 }
 
 export type Team = {
