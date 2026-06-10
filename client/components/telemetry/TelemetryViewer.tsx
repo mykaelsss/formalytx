@@ -55,7 +55,7 @@ export default function TelemetryViewer() {
   const laps = searchParams.get("laps") ?? "";
 
   const chartRef = useEcharts();
-  const hoveredSeriesRef = useRef<number | null>(null);
+  const hoveredSeriesRef = useRef<string | null>(null);
   const seriesRef = useRef<Array<{ name: string; id: string }>>([]);
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
   const [isZoomed, setIsZoomed] = useState(false);
@@ -228,7 +228,7 @@ export default function TelemetryViewer() {
     if (!chart) return;
     chart.on("mouseover", (params) => {
       if (params.componentType === "series") {
-        hoveredSeriesRef.current = params.seriesIndex ?? null;
+        hoveredSeriesRef.current = params.seriesName ?? null;
       }
     });
     chart.on("mouseout", () => {
@@ -287,7 +287,6 @@ export default function TelemetryViewer() {
     if (!chart) return;
 
     const axisFormatter = buildTooltipFormatter({
-      nLaps: series.length / CHANNELS.length,
       corners: circuitData?.corners ?? [],
       telemetryData,
       commonStart,

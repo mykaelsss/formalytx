@@ -1,24 +1,23 @@
-import type { Corner, LapTelemetry } from "./types";
+import type { Corner, LapTelemetryWithSession } from "./types";
 import { CHANNELS, SAMPLE_COUNT } from "./constants";
 import { sampleLap } from "./interp";
 import { formatChannelVal, formatLapTime, getCornerLabel } from "./format";
+import { seriesKey, telemetryToSelected } from "./seriesKey";
 import { format } from "echarts";
 
 type TooltipContext = {
-  nLaps: number;
   corners: Corner[];
-  telemetryData: LapTelemetry[];
+  telemetryData: LapTelemetryWithSession[];
   commonStart: number;
   commonEnd: number;
   deltaBySeries: Map<string, number[]>;
   labelBySeries: Map<string, string>;
   refLapName: string;
   refTimes: number[];
-  hoveredSeriesRef: { current: number | null };
+  hoveredSeriesRef: { current: string | null };
 };
 
 export function buildTooltipFormatter({
-  nLaps,
   corners,
   telemetryData,
   commonStart,
@@ -43,9 +42,13 @@ export function buildTooltipFormatter({
     return `<div class="text-xs text-text-muted mb-1">${label}${total}</div>`;
   };
 
+  const lapByName = new Map(
+    telemetryData.map((lap) => [seriesKey(telemetryToSelected(lap)), lap]),
+  );
+
   return (params: unknown) => {
     const seriesParams = params as Array<{
-      seriesIndex: number;
+      axisIndex: number;
       seriesName: string;
       color: string;
       value: [number, number];
@@ -54,26 +57,14 @@ export function buildTooltipFormatter({
     const currSeries = seriesParams[0];
     if (!currSeries) return "";
     const currentDistance = currSeries.value[0];
-    const channelIdx = Math.floor(currSeries.seriesIndex / nLaps);
-    const inGrid = seriesParams.filter(
-      (p) => Math.floor(p.seriesIndex / nLaps) === channelIdx,
-    );
+    const channelIdx = currSeries.axisIndex;
+    const inGrid = seriesParams.filter((p) => p.axisIndex === channelIdx);
 
-    // Reset hovered state if cursor moved to a different grid
-    const hovered = hoveredSeriesRef.current;
-    if (hovered !== null && Math.floor(hovered / nLaps) !== channelIdx) {
-      hoveredSeriesRef.current = null;
-    }
-
-    const lapIdx =
-      hoveredSeriesRef.current !== null
-        ? hoveredSeriesRef.current % nLaps
-        : null;
-    if (lapIdx !== null) {
-      const lap = telemetryData[lapIdx];
+    const lapName = hoveredSeriesRef.current;
+    if (lapName !== null) {
+      const lap = lapByName.get(lapName);
       if (lap) {
-        const s = inGrid.find((p) => p.seriesIndex % nLaps === lapIdx);
-        const lapName = s?.seriesName ?? "";
+        const s = inGrid.find((p) => p.seriesName === lapName);
         const minD = commonStart;
         const maxD = commonEnd;
         const deltaLookup = (name: string) => {
@@ -128,8 +119,8 @@ export function buildTooltipFormatter({
     // time sort last.
     const ordered = inGrid.toSorted(
       (a, b) =>
-        (telemetryData[a.seriesIndex % nLaps]?.lap_time ?? Infinity) -
-        (telemetryData[b.seriesIndex % nLaps]?.lap_time ?? Infinity),
+        (lapByName.get(a.seriesName)?.lap_time ?? Infinity) -
+        (lapByName.get(b.seriesName)?.lap_time ?? Infinity),
     );
     let html = header(currentDistance);
     for (const p of ordered) {
