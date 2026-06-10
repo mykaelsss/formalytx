@@ -76,10 +76,14 @@ export default function TelemetryTabs({ activeTab: initialTab }: TelemetryTabsPr
         setIsSharing(false);
       }
     } else {
-      await navigator.clipboard.writeText(window.location.href);
-      toast("Copied", {
-        description: `${sessionData?.name} • ${sessionData?.event_name} ${year}`,
-      });
+      try {
+        await navigator.clipboard.writeText(window.location.href);
+        toast("Copied", {
+          description: `${sessionData?.name} • ${sessionData?.event_name} ${year}`,
+        });
+      } catch {
+        toast("There was an error copying this link.");
+      }
     }
   };
 
