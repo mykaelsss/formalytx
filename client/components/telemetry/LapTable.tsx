@@ -1,7 +1,7 @@
 import { Compound, Lap, Team } from "@/lib/types";
 import TireBadge from "./TireBadge";
 import { Skeleton } from "../ui/skeleton";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -21,6 +21,7 @@ interface LapTableProps {
 
 export default function LapTable({ teams }: LapTableProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const year = searchParams.get("year") ?? "";
@@ -210,7 +211,7 @@ export default function LapTable({ teams }: LapTableProps) {
                             },
                             {
                               router,
-                              pathname: window.location.pathname,
+                              pathname: pathname,
                               searchParams,
                               queryClient,
                             },
