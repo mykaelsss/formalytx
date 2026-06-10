@@ -13,8 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-
-const CHANNELS = ["speed", "throttle", "brake", "rpm", "gear", "delta"] as const;
+import { CHANNELS } from "@/lib/constants";
 
 const CHANNEL_LABELS: Record<string, string> = {
   speed: "Spd",
