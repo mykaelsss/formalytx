@@ -566,11 +566,11 @@ export default function TelemetryViewer() {
                     <span className="ml-auto flex items-center gap-1.5 pl-3">
                       <TireBadge
                         compound={item.compound.toUpperCase() as Compound}
-                        size={16}
+                        size={20}
                         year={item.year}
                       />
                       {item.tyreLife !== null && (
-                        <span className="font-mono text-[9px] tracking-[0.1em] uppercase text-text-muted whitespace-nowrap">
+                        <span className="font-mono text-[10px] tracking-widest uppercase text-text-muted whitespace-nowrap">
                           {item.tyreLife} lap{item.tyreLife === 1 ? "" : "s"}{" "}
                           old
                         </span>
