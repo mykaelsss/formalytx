@@ -31,6 +31,7 @@ import { CHANNELS, GRID_GAP, GRID_HEIGHT } from "@/lib/constants";
 import { CHART_STRUCTURE } from "@/lib/chartStructure";
 import { buildTooltipFormatter } from "@/lib/buildTooltipFormatter";
 import { useToggleSeries } from "@/lib/hooks/useToggleSeries";
+import { useAsRef } from "@/hooks/use-as-ref";
 
 function resolveChannelSettings(
   ts: TelemetrySettings,
@@ -60,10 +61,12 @@ export default function TelemetryViewer() {
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
   const [isZoomed, setIsZoomed] = useState(false);
   const [customColors, setCustomColors] = useState<Record<string, string>>({});
-  const customColorsRef = useRef(customColors);
+  const customColorsRef = useAsRef(customColors);
   const [colorSlots, setColorSlots] = useState<Record<string, number>>(() =>
     allocateColorSlots({}, parseSelectedLaps(laps).map(seriesKey)),
   );
+
+  
 
   const toggleSeries = useToggleSeries(hiddenSeries, setHiddenSeries, chartRef);
 
@@ -145,10 +148,6 @@ export default function TelemetryViewer() {
       shownToastsRef.current.add(key);
     }
   }, [failed]);
-
-  useEffect(() => {
-    customColorsRef.current = customColors;
-  }, [customColors]);
 
   const {
     series,
@@ -281,6 +280,8 @@ export default function TelemetryViewer() {
     setIsZoomed(false);
   };
 
+  const telemetrySettingsRef = useAsRef(telemetrySettings)
+
   useEffect(() => {
     if (!chartRef.current) return;
     const chart = getInstanceByDom(chartRef.current);
@@ -313,7 +314,7 @@ export default function TelemetryViewer() {
         series: [
           ...series.map((s, sIdx) => {
             const ch = resolveChannelSettings(
-              telemetrySettings,
+              telemetrySettingsRef.current,
               sIdx,
               series.length,
             );
@@ -347,6 +348,7 @@ export default function TelemetryViewer() {
     labelBySeries,
     refLapName,
     refTimes,
+    telemetrySettingsRef
   ]);
 
   // Settings-only update — merge mode so zoom and chart structure are preserved
