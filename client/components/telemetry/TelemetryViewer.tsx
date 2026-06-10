@@ -9,7 +9,7 @@ import { EChartsOption, getInstanceByDom } from "echarts";
 import { useEcharts } from "@/lib/hooks/useEcharts";
 import { defaultTelemetryChannelSettings } from "@/lib/utils";
 import type { Compound, SelectedLap, TelemetrySettings } from "@/lib/types";
-import { Loader2, X, ZoomOut } from "lucide-react";
+import { Eye, EyeOff, Loader2, X, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
@@ -33,10 +33,7 @@ import { buildTooltipFormatter } from "@/lib/buildTooltipFormatter";
 import { useToggleSeries } from "@/lib/hooks/useToggleSeries";
 import { useAsRef } from "@/hooks/use-as-ref";
 
-function resolveChannelSettings(
-  ts: TelemetrySettings,
-  chIdx: number,
-) {
+function resolveChannelSettings(ts: TelemetrySettings, chIdx: number) {
   const channel = CHANNELS[chIdx];
   return ts.useGlobalSettings
     ? ts.global
@@ -62,8 +59,6 @@ export default function TelemetryViewer() {
   const [colorSlots, setColorSlots] = useState<Record<string, number>>(() =>
     allocateColorSlots({}, parseSelectedLaps(laps).map(seriesKey)),
   );
-
-  
 
   const toggleSeries = useToggleSeries(hiddenSeries, setHiddenSeries, chartRef);
 
@@ -273,7 +268,7 @@ export default function TelemetryViewer() {
     setIsZoomed(false);
   };
 
-  const telemetrySettingsRef = useAsRef(telemetrySettings)
+  const telemetrySettingsRef = useAsRef(telemetrySettings);
 
   useEffect(() => {
     if (!chartRef.current) return;
@@ -308,7 +303,7 @@ export default function TelemetryViewer() {
           ...series.map((s) => {
             const ch = resolveChannelSettings(
               telemetrySettingsRef.current,
-              s.channelIdx
+              s.channelIdx,
             );
             return {
               showSymbol: ch.showSymbol,
@@ -322,13 +317,15 @@ export default function TelemetryViewer() {
           }),
           ...markLineSeries,
         ],
+        legend: {
+          selected: Object.fromEntries(
+            series.map((s) => [s.name, !hiddenSeries.has(s.name)]),
+          ),
+        },
       },
       { replaceMerge: ["series"] },
     );
 
-    for (const name of hiddenSeries) {
-      chart.dispatchAction({ type: "legendUnSelect", name });
-    }
   }, [
     series,
     chartRef,
@@ -341,7 +338,7 @@ export default function TelemetryViewer() {
     refLapName,
     refTimes,
     telemetrySettingsRef,
-    customColorsRef
+    customColorsRef,
   ]);
 
   // Settings-only update — merge mode so zoom and chart structure are preserved
@@ -354,10 +351,7 @@ export default function TelemetryViewer() {
     chart.setOption({
       series: [
         ...currentSeries.map((s) => {
-          const ch = resolveChannelSettings(
-            telemetrySettings,
-            s.channelIdx,
-          );
+          const ch = resolveChannelSettings(telemetrySettings, s.channelIdx);
           return {
             id: s.id,
             smooth: ch.smooth,
@@ -524,15 +518,40 @@ export default function TelemetryViewer() {
                   <span className="min-w-0 font-mono text-[9px] leading-snug tracking-[0.15em] uppercase text-text-muted">
                     {sessionLabelFor(item)}
                   </span>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${item.driver} Lap ${item.lap}`}
-                    title={`Remove ${item.driver} Lap ${item.lap}`}
-                    onClick={() => removeLap(item)}
-                    className="-mr-1 flex size-5 shrink-0 items-center justify-center text-text-muted cursor-pointer outline-none transition-colors hover:bg-accent-red/15 hover:text-accent-red focus-visible:ring-2 focus-visible:ring-accent-red/50"
-                  >
-                    <X size={12} aria-hidden="true" />
-                  </button>
+                  <span className="-mr-1 flex shrink-0 items-center gap-0.5 pointer-coarse:-my-2 pointer-coarse:-mr-2 pointer-coarse:gap-2">
+                    <button
+                      type="button"
+                      aria-pressed={hidden}
+                      aria-label={`Hide ${item.driver} Lap ${item.lap} in chart`}
+                      title={hidden ? "Show in chart" : "Hide from chart"}
+                      onClick={() => toggleSeries(item.key)}
+                      className="flex size-5 items-center justify-center text-text-muted cursor-pointer outline-none transition-colors hover:bg-surface-card-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-ring/50 pointer-coarse:size-11"
+                    >
+                      {hidden ? (
+                        <EyeOff
+                          className="size-3 pointer-coarse:size-4"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Eye
+                          className="size-3 pointer-coarse:size-4"
+                          aria-hidden="true"
+                        />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${item.driver} Lap ${item.lap}`}
+                      title={`Remove ${item.driver} Lap ${item.lap}`}
+                      onClick={() => removeLap(item)}
+                      className="flex size-5 items-center justify-center text-text-muted cursor-pointer outline-none transition-colors hover:bg-accent-red/15 hover:text-accent-red focus-visible:ring-2 focus-visible:ring-accent-red/50 pointer-coarse:size-11"
+                    >
+                      <X
+                        className="size-3 pointer-coarse:size-4"
+                        aria-hidden="true"
+                      />
+                    </button>
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <ColorSwatch
@@ -545,17 +564,13 @@ export default function TelemetryViewer() {
                       }))
                     }
                   />
-                  <button
-                    type="button"
-                    aria-pressed={!hidden}
-                    aria-label={`${hidden ? "Show" : "Hide"} ${item.driver} Lap ${item.lap} in chart`}
-                    onClick={() => toggleSeries(item.key)}
-                    className={`font-mono text-[11px] font-semibold tracking-wider uppercase text-text-secondary cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
+                  <span
+                    className={`font-mono text-[11px] font-semibold tracking-wider uppercase text-text-secondary ${
                       hidden ? "line-through" : ""
                     }`}
                   >
                     {item.driver} · LAP {item.lap}
-                  </button>
+                  </span>
                   {item.compound && (
                     <span className="ml-auto flex items-center gap-1.5 pl-3">
                       <TireBadge
