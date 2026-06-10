@@ -183,10 +183,10 @@ export default function SessionSidebar({
           >
             <SelectGroup>
               <SelectLabel>Schedule</SelectLabel>
-              {schedule?.rounds.map((r, idx) => {
+              {schedule?.rounds.map((r) => {
                 return (
                   <SelectItem
-                    key={idx}
+                    key={r.round}
                     className="text-text-primary"
                     value={r.round.toString()}
                   >
