@@ -107,7 +107,7 @@ export default function LapChart({ teams }: LapChartProps) {
     return allPoints;
   }, [visibleLaps, settings.outlierThreshold]);
 
-  const tooltipFormatter = (params: TopLevelFormatterParams) => {
+  const tooltipFormatter = useCallback((params: TopLevelFormatterParams) => {
     const items = Array.isArray(params) ? params : [params];
     const rows = items
       .filter((p) => p.value != null)
@@ -145,15 +145,15 @@ export default function LapChart({ teams }: LapChartProps) {
                 ${rows}
               </div>
             `;
-  };
+  }, [settings.secondDriverLineStyle, settings.firstDriverLineStyle, secondDrivers]);
 
-  const legendItems = visibleLaps
+  const legendItems = useMemo(() => visibleLaps
     .filter((d) => driverMap.has(d.abbreviation))
     .map((d) => ({
       key: d.abbreviation,
       driver: driverMap.get(d.abbreviation)!,
       isSecond: secondDrivers.has(d.abbreviation),
-    }));
+    })), [driverMap, visibleLaps, secondDrivers]);
 
   const series = useMemo<LineSeriesOption[]>(() => {
     return visibleLaps.flatMap((d) => {
