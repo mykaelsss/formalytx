@@ -692,7 +692,12 @@ export default function TelemetryViewer() {
           </Button>
         ) : (
           <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-text-muted">
+            <span className="pointer-coarse:hidden">
             Scroll to zoom · Hover for sector + corner data
+            </span>
+            <span className="hidden pointer-coarse:inline">
+              Pinch to zoom · Tap for sector + corner data
+            </span>
           </span>
         )}
       </div>
