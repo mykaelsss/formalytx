@@ -213,7 +213,7 @@ export default function Chart<T extends LegendItem>({
   const toggleSeries = useToggleSeries(hiddenSeries, setHiddenSeries, chartRef)
 
   return (
-    <div className="w-full h-120 flex flex-col border border-surface-border bg-surface-card">
+    <div className="w-full flex flex-col border border-surface-border bg-surface-card">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5 border-b border-surface-border">
         <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.2em] uppercase text-text-muted">
           <span
@@ -245,7 +245,7 @@ export default function Chart<T extends LegendItem>({
           <ChartSettingsPanel settings={settings} setSettings={updateSettings} />
         </div>
       </div>
-      <div className="relative w-full flex-1 p-3">
+      <div className="relative w-full h-96 p-3">
         <div ref={chartRef} className="w-full h-full" />
         {isLoading && series.length === 0 && (
           <Skeleton className="absolute inset-3 rounded-none bg-surface-base" />
@@ -273,9 +273,16 @@ export default function Chart<T extends LegendItem>({
           </Button>
         ) : (
           <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-text-muted">
-            {onSeriesClick
-              ? "Scroll to zoom · Click a point to add its lap"
-              : "Scroll to zoom"}
+            <span className="pointer-coarse:hidden">
+              {onSeriesClick
+                ? "Scroll to zoom · Click a point to add its lap"
+                : "Scroll to zoom"}
+            </span>
+            <span className="hidden pointer-coarse:inline">
+              {onSeriesClick
+                ? "Pinch to zoom · Tap a point to add its lap"
+                : "Pinch to zoom"}
+            </span>
           </span>
         )}
       </div>

@@ -318,6 +318,7 @@ export default function TelemetryViewer() {
           ...markLineSeries,
         ],
         legend: {
+          show: false,
           selected: Object.fromEntries(
             series.map((s) => [s.name, !hiddenSeries.has(s.name)]),
           ),
