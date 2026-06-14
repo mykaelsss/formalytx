@@ -22,11 +22,54 @@ import { SpeedInsights } from '@vercel/speed-insights/next';
   });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://formalytx.com"),
   title: {
     default: "Formalytx",
     template: "%s · Formalytx",
   },
   description: "Explore Formula 1 session results, lap times, and car telemetry.",
+  openGraph: {
+    type: "website",
+    siteName: "Formalytx",
+    title: "Formalytx · F1 Telemetry Explorer",
+    description: "Explore Formula 1 session results, lap times, and car telemetry.",
+    url: "https://formalytx.com",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Formalytx · F1 Telemetry Explorer",
+    description: "Explore Formula 1 session results, lap times, and car telemetry.",
+  },
+};
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://formalytx.com/#website",
+      url: "https://formalytx.com",
+      name: "Formalytx",
+      description: "Explore Formula 1 session results, lap times, and car telemetry.",
+      inLanguage: "en-US",
+    },
+    {
+      "@type": "WebApplication",
+      "@id": "https://formalytx.com/#app",
+      name: "Formalytx",
+      url: "https://formalytx.com",
+      description: "Browse Formula 1 seasons, events, and sessions, then compare driver laps and inspect raw car telemetry — powered by FastF1.",
+      applicationCategory: "SportsApplication",
+      operatingSystem: "Any",
+      browserRequirements: "Requires JavaScript. Requires HTML5.",
+      offers: {
+        "@type": "Offer",
+        price: "0",
+        priceCurrency: "USD",
+      },
+    },
+  ],
 };
 
 export default function RootLayout({
@@ -40,6 +83,12 @@ export default function RootLayout({
       className={cn("h-full", "antialiased", exo2.variable, robotoMono.variable)}
     >
       <body className="bg-background min-h-full flex flex-col">
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c"),
+          }}
+        />
         <Providers>
           <TooltipProvider>
             <Nav />

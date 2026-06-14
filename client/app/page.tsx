@@ -209,7 +209,7 @@ export default function Home() {
               style={{ animationDuration: "600ms", animationFillMode: "both" }}
             >
               <span className="font-mono text-[10px] tracking-[0.3em] uppercase text-text-muted">
-                [ Every lap · Every channel · Every session ]
+                [ F1 Telemetry Explorer · Every lap · Every channel ]
               </span>
 
               <h1 className="font-black italic uppercase text-text-primary tracking-tight leading-[0.92] text-[clamp(3.25rem,8vw,6.5rem)]">

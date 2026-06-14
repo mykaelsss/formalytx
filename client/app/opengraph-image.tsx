@@ -1,10 +1,16 @@
 import { ImageResponse } from "next/og";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-export default function Image() {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+export default async function Image() {
+  const logoData = await readFile(
+    join(process.cwd(), "public/formalytx_light.svg"),
+    "base64",
+  );
+  const logoSrc = `data:image/svg+xml;base64,${logoData}`;
 
   return new ImageResponse(
     (
@@ -20,7 +26,7 @@ export default function Image() {
         }}
       >
         <img
-          src={`${baseUrl}/formalytx_light.svg`}
+          src={logoSrc}
           alt="formalytx logo"
           width={120}
           height={77}
