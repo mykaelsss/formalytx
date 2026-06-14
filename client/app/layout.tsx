@@ -10,6 +10,7 @@ import Footer from "@/components/Footer"
 import Nav from "@/components/Nav"
 import { Analytics } from "@vercel/analytics/next"
 import { SpeedInsights } from '@vercel/speed-insights/next';
+import { NuqsAdapter } from 'nuqs/adapters/next/app'
 
   const exo2 = Exo_2({
     subsets: ['latin'],
@@ -92,7 +93,9 @@ export default function RootLayout({
         <Providers>
           <TooltipProvider>
             <Nav />
-            {children}
+            <NuqsAdapter>
+              {children}
+            </NuqsAdapter>
           </TooltipProvider>
           <Toaster 
           position="bottom-right" 
