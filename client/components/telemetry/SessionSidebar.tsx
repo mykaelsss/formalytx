@@ -186,7 +186,7 @@ export default function SessionSidebar({
               {schedule?.rounds.map((r) => {
                 return (
                   <SelectItem
-                    key={r.round}
+                    key={r.round + r.official_event_name}
                     className="text-text-primary"
                     value={r.round.toString()}
                   >
