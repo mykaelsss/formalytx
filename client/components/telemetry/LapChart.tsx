@@ -2,7 +2,7 @@
 
 import { format, type LineSeriesOption } from "echarts";
 import type { TopLevelFormatterParams } from "echarts/types/dist/shared";
-import type { Team } from "@/lib/types";
+import type { Compound, Team } from "@/lib/types";
 import { useCallback, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Chart from "../chart/Chart";
@@ -12,6 +12,9 @@ import { toggleLap, parseSelectedLaps } from "@/lib/selectedLaps";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
 import { useRoundSchedule } from "@/lib/hooks/useRoundSchedule";
 import { useQueryClient } from "@tanstack/react-query";
+import TyreBadge from "./TyreBadge";
+import { renderToStaticMarkup } from 'react-dom/server';
+import { CompoundColor } from "@/lib/compounds";
 
 interface LapChartProps {
   teams: Team[];
@@ -47,7 +50,7 @@ export default function LapChart({ teams }: LapChartProps) {
   const drivers = searchParams.get("drivers") ?? "";
   const laps = searchParams.get("laps") ?? "";
 
-    const selectedDrivers = useMemo(
+  const selectedDrivers = useMemo(
     () => (drivers ? drivers.split(",") : []),
     [drivers],
   );
@@ -59,11 +62,19 @@ export default function LapChart({ teams }: LapChartProps) {
   );
 
   const { data: roundSchedule } = useRoundSchedule(year, round);
-  const sessionStatus = roundSchedule?.sessions.find((s) => s.identifier === session)?.status;
+  const sessionStatus = roundSchedule?.sessions.find(
+    (s) => s.identifier === session,
+  )?.status;
   const staleTime = sessionStatus === "completed" ? Infinity : 60_000;
 
-  const { driverLaps, isLoading: isLoadingLaps } = useSessionLaps(year, round, session, selectedDrivers, staleTime)
-  
+  const { driverLaps, isLoading: isLoadingLaps } = useSessionLaps(
+    year,
+    round,
+    session,
+    selectedDrivers,
+    staleTime,
+  );
+
   const visibleLaps = useMemo(
     () => driverLaps.filter((d) => selectedDrivers.includes(d.abbreviation)),
     [driverLaps, selectedDrivers],
@@ -100,11 +111,12 @@ export default function LapChart({ teams }: LapChartProps) {
     const maxLaps = Math.max(...lapLengths);
 
     const allPoints = Array.from({ length: maxLaps }, (_, i) => {
-      const point: Record<string, number | null> = { lap: i + 1 };
+      const point: Record<string, number | string | null> = { lap: i + 1 };
       for (const d of visibleLaps) {
         const lap = d.laps[i];
         const secs = lap ? lapTimeToSeconds(lap.lap_time) : null;
         point[d.abbreviation] = secs !== null && secs <= cutoff ? secs : null;
+        point[`${d.abbreviation}_tyre`] = lap?.compound ?? null;
       }
       return point;
     });
@@ -112,22 +124,35 @@ export default function LapChart({ teams }: LapChartProps) {
     return allPoints;
   }, [visibleLaps, settings.outlierThreshold]);
 
-  const tooltipFormatter = useCallback((params: TopLevelFormatterParams) => {
-    const items = Array.isArray(params) ? params : [params];
-    const rows = items
-      .filter((p) => p.value != null)
-      .map((p) => {
-        const isSecond = secondDrivers.has(p.seriesName ?? "");
-        const lineStyle = isSecond
-          ? settings.secondDriverLineStyle
-          : settings.firstDriverLineStyle;
-        const marker = `
+  const tyreIconCache = useMemo(() => {
+    return Object.fromEntries(
+      (Object.keys(CompoundColor) as Compound[]).map((compound) => [
+        compound,
+        renderToStaticMarkup(<TyreBadge compound={compound} size={20} year={year} />),
+      ])
+    ) as Record<Compound, string>;
+  }, [year]);
+
+  const tooltipFormatter = useCallback(
+    (params: TopLevelFormatterParams) => {
+      const items = Array.isArray(params) ? params : [params];
+      const rows = items
+        .filter((p) => p.value != null)
+        .map((p) => {
+          const data = p.data as { value: [number, number]; tyre?: string | null };
+          const isSecond = secondDrivers.has(p.seriesName ?? "");
+          const tyre = data.tyre ?? '';
+          const icon = tyreIconCache[tyre as Compound] ?? '';
+          const lineStyle = isSecond
+            ? settings.secondDriverLineStyle
+            : settings.firstDriverLineStyle;
+          const marker = `
                     <span 
                     class="inline-block w-5 mr-2 border-t-2" 
                     style="border-color:${format.encodeHTML(p.color as string)};border-style:${format.encodeHTML(lineStyle)};">
                     </span>
                   `;
-        return `
+          return `
                 <div class="flex justify-between gap-2">
                   <div class="flex items-center">
                     ${marker}
@@ -135,30 +160,41 @@ export default function LapChart({ teams }: LapChartProps) {
                     class="leading-none">${format.encodeHTML(p.seriesName ?? "")}
                     </span>
                   </div>
-                  <span class="font-mono">
+                  <span class="font-mono flex gap-2">
                   ${format.encodeHTML(secondsToLapTime((p.value as [number, number])[1], 3))}
+                  ${icon}
                   </span>
                 </div>`;
-      })
-      .join("");
+        })
+        .join("");
 
-    const lap = (items[0]?.value as [number, number])?.[0];
+      const lap = (items[0]?.value as [number, number])?.[0];
 
-    return `
+      return `
               <div class="text-xs text-white">
                 <span>Lap ${format.encodeHTML(String(lap))}</span>
                 ${rows}
               </div>
             `;
-  }, [settings.secondDriverLineStyle, settings.firstDriverLineStyle, secondDrivers]);
+    },
+    [
+      settings.secondDriverLineStyle,
+      settings.firstDriverLineStyle,
+      secondDrivers,
+    ],
+  );
 
-  const legendItems = useMemo(() => visibleLaps
-    .filter((d) => driverMap.has(d.abbreviation))
-    .map((d) => ({
-      key: d.abbreviation,
-      driver: driverMap.get(d.abbreviation)!,
-      isSecond: secondDrivers.has(d.abbreviation),
-    })), [driverMap, visibleLaps, secondDrivers]);
+  const legendItems = useMemo(
+    () =>
+      visibleLaps
+        .filter((d) => driverMap.has(d.abbreviation))
+        .map((d) => ({
+          key: d.abbreviation,
+          driver: driverMap.get(d.abbreviation)!,
+          isSecond: secondDrivers.has(d.abbreviation),
+        })),
+    [driverMap, visibleLaps, secondDrivers],
+  );
 
   const series = useMemo<LineSeriesOption[]>(() => {
     return visibleLaps.flatMap((d) => {
@@ -182,7 +218,10 @@ export default function LapChart({ teams }: LapChartProps) {
             },
         data: chartData
           .filter((p) => p[d.abbreviation] != null)
-          .map((p) => [p['lap'], p[d.abbreviation]]),
+          .map((p) => ({
+            value: [p["lap"], p[d.abbreviation]] as [number, number],
+            tyre: p[`${d.abbreviation}_tyre`],
+          })),
       };
     });
   }, [
@@ -197,13 +236,31 @@ export default function LapChart({ teams }: LapChartProps) {
 
   const selectedLaps = useMemo(() => parseSelectedLaps(laps), [laps]);
 
-  const handleSeriesClick = useCallback(({ seriesName, value }: { seriesName: string; value: [number, number] }) => {
-    toggleLap(
+  const handleSeriesClick = useCallback(
+    ({
+      seriesName,
+      value,
+    }: {
+      seriesName: string;
+      value: [number, number];
+    }) => {
+      toggleLap(
+        selectedLaps,
+        { year, round, session, driver: seriesName, lap: value[0] },
+        { router, pathname, searchParams, queryClient },
+      );
+    },
+    [
       selectedLaps,
-      { year, round, session, driver: seriesName, lap: value[0] },
-      { router, pathname, searchParams, queryClient },
-    );
-  }, [selectedLaps, year, round, session, pathname, router, searchParams, queryClient]);
+      year,
+      round,
+      session,
+      pathname,
+      router,
+      searchParams,
+      queryClient,
+    ],
+  );
 
   return (
     <Chart

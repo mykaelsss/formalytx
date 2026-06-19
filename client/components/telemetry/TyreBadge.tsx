@@ -1,7 +1,7 @@
 import { CompoundColor, CompoundColor2018, CompoundLetter } from "@/lib/compounds";
 import { Compound } from "@/lib/types";
 
-export default function TireBadge({
+export default function TyreBadge({
   compound,
   size = 20,
   year = "2026",

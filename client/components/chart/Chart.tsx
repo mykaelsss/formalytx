@@ -84,6 +84,7 @@ export default function Chart<T extends LegendItem>({
       backgroundColor: "oklch(17.76% 0.000 0)",
       borderColor: "oklch(28.50% 0.000 0)",
       enterable: true,
+      confine: true,
       axisPointer: {
         type: "line" as const,
         z: 0,

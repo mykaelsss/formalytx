@@ -1,5 +1,5 @@
 import { Compound, Lap, Team } from "@/lib/types";
-import TireBadge from "./TireBadge";
+import TyreBadge from "./TyreBadge";
 import { Skeleton } from "../ui/skeleton";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -231,7 +231,7 @@ export default function LapTable({ teams }: LapTableProps) {
                         >
                           {abbreviation}
                         </span>
-                        <TireBadge
+                        <TyreBadge
                           compound={
                             (lap.compound?.toUpperCase() ?? "HARD") as Compound
                           }
@@ -248,19 +248,6 @@ export default function LapTable({ teams }: LapTableProps) {
                         >
                           {lap.lap_time ?? "—"}
                         </span>
-                        {isFastestOverall ? (
-                          <span className="text-data-violet font-mono font-bold text-[10px] tracking-[0.15em]">
-                            BEST
-                          </span>
-                        ) : isDriverBest ? (
-                          <span className="text-accent-green font-mono font-bold text-[10px] tracking-[0.15em]">
-                            PB
-                          </span>
-                        ) : deltaMs !== null && deltaMs > 0 ? (
-                          <span className="text-text-muted font-mono tabular-nums">
-                            {formatDelta(deltaMs)}
-                          </span>
-                        ) : null}
                         <span
                           className={cn(
                             "font-mono text-[9px] tracking-[0.15em] w-14 text-right shrink-0 transition-opacity max-sm:hidden",
@@ -271,6 +258,20 @@ export default function LapTable({ teams }: LapTableProps) {
                         >
                           {isOnChart ? "● ADDED" : "+ ADD"}
                         </span>
+                        {isFastestOverall ? (
+                          <span className="text-data-violet font-mono font-bold text-[10px] tracking-[0.15em]">
+                            BEST
+                          </span>
+                        ) : isDriverBest ? (
+                          <span className="text-accent-green font-mono font-bold text-[10px] tracking-[0.15em]">
+                            PB
+                          </span>
+                        ) : null}
+                        {deltaMs !== null && deltaMs > 0 && (
+                          <span className="text-text-muted font-mono tabular-nums">
+                            {formatDelta(deltaMs)}
+                          </span>
+                        )}
                       </button>
                     );
                   })()

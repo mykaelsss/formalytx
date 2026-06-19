@@ -22,7 +22,7 @@ import { seriesKey } from "@/lib/seriesKey";
 import { formatLapTime } from "@/lib/format";
 import { fetchSession } from "@/lib/api";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
-import TireBadge from "./TireBadge";
+import TyreBadge from "./TyreBadge";
 import { allocateColorSlots, lapColor } from "@/lib/colors";
 import { useTelemetrySeries } from "@/lib/hooks/useTelemetrySeries";
 import TelemetrySettingsPanel from "./TelemetrySettingsPanel";
@@ -574,7 +574,7 @@ export default function TelemetryViewer() {
                   </span>
                   {item.compound && (
                     <span className="ml-auto flex items-center gap-1.5 pl-3">
-                      <TireBadge
+                      <TyreBadge
                         compound={item.compound.toUpperCase() as Compound}
                         size={20}
                         year={item.year}
