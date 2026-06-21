@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 export default async function TelemetryPage({
   searchParams
 }: {
-  searchParams: Promise<{ tab?: string; year?: string; round?: string; session?: string }>
+  searchParams: Promise<{ tab?: string; year?: string; event?: string; session?: string }>
 }) {
 
   const params = await searchParams;

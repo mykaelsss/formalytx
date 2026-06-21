@@ -15,7 +15,7 @@ import { Driver, SelectedLap, Team } from "@/lib/types";
 import { Skeleton } from "../ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useSchedule } from "@/lib/hooks/useSchedule";
-import { useRoundSchedule } from "@/lib/hooks/useRoundSchedule";
+import { useEventSchedule } from "@/lib/hooks/useEventSchedule";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
 import { lapTimeToMs } from "@/lib/format";
 import {
@@ -44,18 +44,23 @@ export default function SessionSidebar({
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const year = searchParams.get("year") ?? "";
-  const round = searchParams.get("round") ?? "";
+  const event = searchParams.get("event") ?? "";
   const session = searchParams.get("session") ?? "";
   const drivers = searchParams.get("drivers") ?? "";
 
   const selectedDrivers = useMemo(
-      () => (drivers ? drivers.split(",") : []),
-      [drivers],
-    );
+    () => (drivers ? drivers.split(",") : []),
+    [drivers],
+  );
 
   const { data: schedule, isLoading: isLoadingSchedule } = useSchedule(year);
-  const { data: roundSchedule, isLoading: isLoadingRound } = useRoundSchedule(year, round);
-  const sessionStatus = roundSchedule?.sessions.find((s) => s.identifier === session)?.status;
+  const { data: eventSchedule, isLoading: isLoadingRound } = useEventSchedule(
+    year,
+    event,
+  );
+  const sessionStatus = eventSchedule?.sessions.find(
+    (s) => s.identifier === session,
+  )?.status;
   const staleTime = sessionStatus === "completed" ? Infinity : 60_000;
 
   const createQueryString = useCallback(
@@ -92,7 +97,11 @@ export default function SessionSidebar({
     router.replace(pathname + "?" + params.toString(), { scroll: false });
   };
 
-  const { driverLaps, isLoading: isLoadingLaps, fetchingDrivers} = useSessionLaps(year, round, session, selectedDrivers, staleTime);
+  const {
+    driverLaps,
+    isLoading: isLoadingLaps,
+    fetchingDrivers,
+  } = useSessionLaps(year, event, session, selectedDrivers, staleTime);
 
   const compareFastestLaps = async () => {
     const byCode = new Map(driverLaps.map((d) => [d.abbreviation, d]));
@@ -113,7 +122,7 @@ export default function SessionSidebar({
           }
         }
         if (bestNum === null) continue;
-        const entry = { year, round, session, driver: code, lap: bestNum };
+        const entry = { year, event, session, driver: code, lap: bestNum };
         if (!isLapSelected(merged, entry)) merged.push(entry);
       }
       if (!merged.length) return;
@@ -123,10 +132,26 @@ export default function SessionSidebar({
       router.push(pathname + "?" + params.toString());
     };
 
-    if (await ensureSameCircuit(queryClient, existing, { year, round, session }, proceed)) {
+    if (
+      await ensureSameCircuit(
+        queryClient,
+        existing,
+        { year, event, session },
+        proceed,
+      )
+    ) {
       proceed(existing);
     }
   };
+
+  const eventNameCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (!schedule?.events) return counts;
+    for (const e of schedule.events) {
+      counts.set(e.event_name, (counts.get(e.event_name) ?? 0) + 1);
+    }
+    return counts;
+  }, [schedule]);
 
   return (
     <div className="shrink-0 flex flex-col">
@@ -135,105 +160,112 @@ export default function SessionSidebar({
           <span className="font-mono text-[9px] font-semibold tracking-[0.25em] uppercase text-data-blue">
             01 · Year
           </span>
-        <Select
-          value={year}
-          onValueChange={(val) =>
-            router.push(pathname + "?" + createQueryString("year", val))
-          }
-        >
-          <SelectTrigger className="w-full rounded-none font-mono text-xs text-text-primary border-surface-border bg-surface-card">
-            <SelectValue placeholder="Select year" />
-          </SelectTrigger>
-          <SelectContent
-            side="bottom"
-            position="popper"
-            className="bg-surface-card max-h-60"
+          <Select
+            value={year}
+            onValueChange={(val) =>
+              router.push(pathname + "?" + createQueryString("year", val))
+            }
           >
-            <SelectGroup>
-              <SelectLabel>Year</SelectLabel>
-              {YEARS.map((y) => {
-                return (
-                  <SelectItem key={y} className="text-text-primary" value={y}>
-                    {y}
-                  </SelectItem>
-                );
-              })}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+            <SelectTrigger className="w-full rounded-none font-mono text-xs text-text-primary border-surface-border bg-surface-card">
+              <SelectValue placeholder="Select year" />
+            </SelectTrigger>
+            <SelectContent
+              side="bottom"
+              position="popper"
+              className="bg-surface-card max-h-60"
+            >
+              <SelectGroup>
+                <SelectLabel>Year</SelectLabel>
+                {YEARS.map((y) => {
+                  return (
+                    <SelectItem key={y} className="text-text-primary" value={y}>
+                      {y}
+                    </SelectItem>
+                  );
+                })}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
         <div className="flex flex-col gap-1.5">
           <span className="font-mono text-[9px] font-semibold tracking-[0.25em] uppercase text-data-violet">
             02 · Event
           </span>
-        <Select
-          value={round}
-          disabled={isLoadingSchedule}
-          onValueChange={(val) =>
-            router.push(pathname + "?" + createQueryString("round", val))
-          }
-        >
-          <SelectTrigger className="w-full rounded-none font-mono text-xs text-text-primary border-surface-border bg-surface-card">
-            <SelectValue placeholder="Select event" />
-          </SelectTrigger>
-          <SelectContent
-            side="bottom"
-            position="popper"
-            className="bg-surface-card max-h-60"
+          <Select
+            value={event}
+            disabled={isLoadingSchedule}
+            onValueChange={(val) =>
+              router.push(pathname + "?" + createQueryString("event", val))
+            }
           >
-            <SelectGroup>
-              <SelectLabel>Schedule</SelectLabel>
-              {schedule?.rounds.map((r) => {
-                return (
-                  <SelectItem
-                    key={r.round + r.official_event_name}
-                    className="text-text-primary"
-                    value={r.round.toString()}
-                  >
-                    {r.event_name}
-                  </SelectItem>
-                );
-              })}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+            <SelectTrigger className="w-full rounded-none font-mono text-xs text-text-primary border-surface-border bg-surface-card">
+              <SelectValue placeholder="Select event" />
+            </SelectTrigger>
+            <SelectContent
+              side="bottom"
+              position="popper"
+              className="bg-surface-card max-h-60"
+            >
+              <SelectGroup>
+                <SelectLabel>Schedule</SelectLabel>
+                {schedule?.events?.map((e) => {
+                  const isDup =
+                    (eventNameCounts.get(e.event_name) ?? 0) > 1;
+                  const suffix =
+                    isDup && e.event_format === "testing"
+                      ? ` ${e.identifier.slice(1)}`
+                      : "";
+                  return (
+                    <SelectItem
+                      key={e.identifier}
+                      className="text-text-primary"
+                      value={e.identifier}
+                    >
+                      {e.event_name}
+                      {suffix}
+                    </SelectItem>
+                  );
+                })}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
         <div className="flex flex-col gap-1.5">
           <span className="font-mono text-[9px] font-semibold tracking-[0.25em] uppercase text-data-amber">
             03 · Session
           </span>
-        <Select
-          value={session}
-          disabled={isLoadingRound}
-          onValueChange={(val) =>
-            router.push(pathname + "?" + createQueryString("session", val))
-          }
-        >
-          <SelectTrigger className="w-full rounded-none font-mono text-xs text-text-primary border-surface-border bg-surface-card">
-            <SelectValue placeholder="Select session" />
-          </SelectTrigger>
-          <SelectContent
-            side="bottom"
-            position="popper"
-            className="bg-surface-card max-h-60"
+          <Select
+            value={session}
+            disabled={isLoadingRound}
+            onValueChange={(val) =>
+              router.push(pathname + "?" + createQueryString("session", val))
+            }
           >
-            <SelectGroup>
-              <SelectLabel>Session</SelectLabel>
-              {roundSchedule?.sessions.map((s) => {
-                return (
-                  <SelectItem
-                    key={s.identifier}
-                    className="text-text-primary"
-                    value={s.identifier}
-                    disabled={s.status !== "completed"}
-                  >
-                    {s.name}
-                  </SelectItem>
-                );
-              })}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+            <SelectTrigger className="w-full rounded-none font-mono text-xs text-text-primary border-surface-border bg-surface-card">
+              <SelectValue placeholder="Select session" />
+            </SelectTrigger>
+            <SelectContent
+              side="bottom"
+              position="popper"
+              className="bg-surface-card max-h-60"
+            >
+              <SelectGroup>
+                <SelectLabel>Session</SelectLabel>
+                {eventSchedule?.sessions.map((s) => {
+                  return (
+                    <SelectItem
+                      key={s.identifier}
+                      className="text-text-primary"
+                      value={s.identifier}
+                      disabled={s.status !== "completed"}
+                    >
+                      {s.name}
+                    </SelectItem>
+                  );
+                })}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
       </div>
       {(loadingSession || teams.length > 0) && (
@@ -254,7 +286,10 @@ export default function SessionSidebar({
             ))
           : teams.map((team) => {
               return (
-                <div key={team.name} className="animate-in fade-in-5 duration-1000">
+                <div
+                  key={team.name}
+                  className="animate-in fade-in-5 duration-1000"
+                >
                   <span className="font-mono text-[9px] text-text-muted uppercase tracking-[0.18em] mb-1 block truncate">
                     {team.name}
                   </span>
@@ -276,7 +311,9 @@ export default function SessionSidebar({
                             d.participated
                               ? "cursor-pointer hover:border-text-disabled"
                               : "cursor-not-allowed opacity-60 line-through",
-                            active ? "text-black border-transparent" : "text-text-muted",
+                            active
+                              ? "text-black border-transparent"
+                              : "text-text-muted",
                           )}
                         >
                           <span

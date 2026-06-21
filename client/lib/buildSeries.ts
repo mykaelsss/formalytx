@@ -141,13 +141,13 @@ export function buildSeries(
   // one session; once sessions mix, the label must say which event each lap
   // belongs to or identical driver/lap pairs become indistinguishable.
   const singleSession =
-    new Set(kept.map((l) => `${l.year}:${l.round}:${l.session}`)).size <= 1;
+    new Set(kept.map((l) => `${l.year}:${l.event}:${l.session}`)).size <= 1;
   const labelBySeries = new Map(
     lapEntries.map(({ lap, name }) => [
       name,
       singleSession
         ? `${lap.driver} - Lap ${lap.lap_number}`
-        : `${lap.driver} - Lap ${lap.lap_number} · ${lap.year} R${lap.round} ${lap.session}`,
+        : `${lap.driver} - Lap ${lap.lap_number} · ${lap.year} ${lap.event} ${lap.session}`,
     ]),
   );
 
@@ -217,7 +217,7 @@ export function buildSeries(
     compound: lap.compound ?? null,
     tyreLife: lap.tyre_life ?? null,
     year: lap.year,
-    round: lap.round,
+    event: lap.event,
     session: lap.session,
   }));
 

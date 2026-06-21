@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Response
-from app.schedule.services import get_schedule, get_round, get_round_detailed, get_circuit_info, get_podium, get_results
+from app.schedule.services import get_schedule, get_event, get_event_detailed, get_circuit_info, get_podium, get_results
 from app.caching import cache_control_for, cache_control_for_year
 from .services import SessionDetailConfig
 
@@ -11,35 +11,35 @@ def schedule(year: int, response: Response):
     response.headers["Cache-Control"] = cache_control_for_year(year)
     return data
 
-@router.get("/{year}/{round}")
-def round_detail(year: int, round: int, response: Response):
-    data = get_round(year, round)
-    response.headers["Cache-Control"] = cache_control_for(year, round, "R")
+@router.get("/{year}/{event_id}")
+def event_detail(year: int, event_id: str, response: Response):
+    data = get_event(year, event_id)
+    response.headers["Cache-Control"] = cache_control_for(year, event_id, "R")
     return data
 
-@router.get("/{year}/{round}/detailed")
-def round_detail_detailed(year: int, round: int, response: Response, weather: bool = True, laps: bool = True):
+@router.get("/{year}/{event_id}/detailed")
+def event_detail_detailed(year: int, event_id: str, response: Response, weather: bool = True, laps: bool = True):
     config = SessionDetailConfig(weather, laps)
-    data = get_round_detailed(year, round, config)
-    response.headers["Cache-Control"] = cache_control_for(year, round, "R")
+    data = get_event_detailed(year, event_id, config)
+    response.headers["Cache-Control"] = cache_control_for(year, event_id, "R")
     return data
 
-@router.get("/{year}/{round}/{identifier}/results")
-def results(year: int, round: int, identifier: str, response: Response):
-    data = get_results(year, round, identifier)
-    response.headers["Cache-Control"] = cache_control_for(year, round, identifier)
-    return data
-
-
-@router.get("/{year}/{round}/podium")
-def podium(year: int, round: int, response: Response):
-    data = get_podium(year, round)
-    response.headers["Cache-Control"] = cache_control_for(year, round, "R")
+@router.get("/{year}/{event_id}/{identifier}/results")
+def results(year: int, event_id: str, identifier: str, response: Response):
+    data = get_results(year, event_id, identifier)
+    response.headers["Cache-Control"] = cache_control_for(year, event_id, identifier)
     return data
 
 
-@router.get("/{year}/{round}/circuit")
-def circuit(year: int, round: int, response: Response):
-    data = get_circuit_info(year, round)
-    response.headers["Cache-Control"] = cache_control_for(year, round, "R")
+@router.get("/{year}/{event_id}/podium")
+def podium(year: int, event_id: str, response: Response):
+    data = get_podium(year, event_id)
+    response.headers["Cache-Control"] = cache_control_for(year, event_id, "R")
+    return data
+
+
+@router.get("/{year}/{event_id}/circuit")
+def circuit(year: int, event_id: str, response: Response):
+    data = get_circuit_info(year, event_id)
+    response.headers["Cache-Control"] = cache_control_for(year, event_id, 1)
     return data

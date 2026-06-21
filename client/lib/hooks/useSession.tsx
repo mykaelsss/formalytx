@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchSession } from "../api";
 
-export function useSession(year: string, round: string, session: string) {
+export function useSession(year: string, event: string, session: string) {
   return useQuery({
-    queryKey: ["session", year, round, session],
-    queryFn: () => fetchSession(year, round, session),
-    enabled: !!year && !!round && !!session,
+    queryKey: ["session", year, event, session],
+    queryFn: () => fetchSession(year, event, session),
+    enabled: !!year && !!event && !!session,
     placeholderData: (previousData) => previousData,
   });
 }

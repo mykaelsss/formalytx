@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 from fastf1.core import Session
 from dataclasses import dataclass
+from app.utils import resolve_event, resolve_session
 
 from app.fastf1_loader import locked_load
 
@@ -35,13 +36,23 @@ SESSION_DURATION_MINUTES = {
 
 def get_schedule(year: int):
     schedule = fastf1.get_event_schedule(year)
-    rounds = []
+    events = []
+    test_events = 1
 
     for _, event in schedule.iterrows():
         status = _event_status(event["EventDate"])
         round_num = int(event["RoundNumber"])
-        rounds.append({
+        event_format = event["EventFormat"]
+        identifier = ''
+        if event_format == "testing":
+            identifier = f"t{test_events}"
+            test_events += 1
+        else:
+            identifier = f"r{round_num}"
+
+        events.append({
             "round": round_num,
+            "identifier": identifier,
             "country": event["Country"],
             "location": event["Location"],
             "official_event_name": event['OfficialEventName'],
@@ -52,19 +63,19 @@ def get_schedule(year: int):
             "status": status,
         })
 
-    return {"year": year, "rounds": rounds}
+    return {"year": year, "events": events}
 
-def get_results(year: int, round: int, identifier: str):
-    session = fastf1.get_session(year, round, identifier)
+def get_results(year: int, event_id: str, identifier: str):
+    session = resolve_session(year, event_id, identifier)
     uid = identifier.upper()
     if uid in {"FP1", "FP2", "FP3"}:
-        locked_load(session, year, round, identifier, laps=True, telemetry=False, weather=False, messages=False)
+        locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
         return _practice_results(session)
     elif uid in {"Q", "SQ"}:
-        locked_load(session, year, round, identifier, laps=True, telemetry=False, weather=False, messages=False)
+        locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
         return _qualifying_results(session)
     else:
-        locked_load(session, year, round, identifier, laps=False, telemetry=False, weather=False, messages=False)
+        locked_load(session, year, event_id, identifier, laps=False, telemetry=False, weather=False, messages=False)
         return _race_results(session)
 
 
@@ -203,10 +214,10 @@ def _format_lap_time(td) -> str | None:
     s = secs % 60
     return f"{m}:{s:06.3f}"
 
-def get_podium(year: int, round: int):
+def get_podium(year: int, event_id: str):
     try:
-        session = fastf1.get_session(year, round, 'R')
-        locked_load(session, year, round, 'R', telemetry=False, weather=False, messages=False)
+        session = resolve_session(year, event_id, 'R')
+        locked_load(session, year, event_id, 'R', telemetry=False, weather=False, messages=False)
         results = session.results
 
         # Normalise Position to numeric — older years may have strings or floats
@@ -249,10 +260,11 @@ def get_podium(year: int, round: int):
         return []
 
 
-def get_circuit_info(year: int, round: int, identifier: str = 'R'):
+def get_circuit_info(year: int, event_id: str):
     try:
-        session = fastf1.get_session(year, round, identifier)
-        locked_load(session, year, round, identifier, laps=True, telemetry=True, weather=False, messages=False)
+        identifier = 1
+        session = resolve_session(year, event_id, identifier)
+        locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
         circuit_info = session.get_circuit_info()
 
         sector_distances = []
@@ -283,12 +295,12 @@ def get_circuit_info(year: int, round: int, identifier: str = 'R'):
     except Exception as e:
         return {"available": False, "error": str(e)}
 
-def get_round(year: int, round: int):
-    event = fastf1.get_event(year, round)
-    sessions = _get_round_sessions(event)
+def get_event(year: int, event_id: str):
+    event = resolve_event(year, event_id)
+    sessions = _get_event_sessions(event)
 
     return {
-        "round": round,
+        "round": int(event["RoundNumber"]),
         "year": year,
         "name": event["EventName"],
         "country": event["Country"],
@@ -298,12 +310,13 @@ def get_round(year: int, round: int):
         "sessions": sessions,
     }
 
-def get_round_detailed(year: int, round: int, config: SessionDetailConfig = SessionDetailConfig()):
-    event = fastf1.get_event(year, round)
-    sessions = _get_round_sessions_detailed(event, year, round, config)
+def get_event_detailed(year: int, event_id: str, config: SessionDetailConfig = SessionDetailConfig()):
+    event = resolve_event(year, event_id)
+    round_num = int(event["RoundNumber"])
+    sessions = _get_event_sessions_detailed(event, year, event_id, config)
 
     return {
-        "round": round,
+        "round": round_num,
         "year": year,
         "name": event["EventName"],
         "country": event["Country"],
@@ -313,52 +326,56 @@ def get_round_detailed(year: int, round: int, config: SessionDetailConfig = Sess
         "sessions": sessions,
     }
 
-def _get_round_sessions(event):
+def _get_event_sessions(event):
     sessions = []
     for i in range(1, 6):
         name = event.get(f"Session{i}")
         date = event.get(f"Session{i}Date")
         if not name or str(name).strip() == "":
             continue
+        if pd.isna(date):
+            continue
         identifier = SESSION_NAME_TO_IDENTIFIER.get(name, name)
         status = _event_status(date)
-        start_time = str(date.time())[:5] if hasattr(date, "time") else None
+        start_time = str(date.time())[:5]
         duration = SESSION_DURATION_MINUTES.get(identifier, 60)
-        end_dt = date + timedelta(minutes=duration) if hasattr(date, "time") else None
+        end_dt = date + timedelta(minutes=duration)
         end_time = str(end_dt.time())[:5] if end_dt else None
 
         sessions.append({
             "name": name,
             "identifier": identifier,
-            "date": str(date.date()) if hasattr(date, "date") else str(date),
+            "date": str(date.date()),
             "start_time": start_time,
             "end_time": end_time,
             "status": status,
         })
     return sessions
 
-def _get_round_sessions_detailed(event, year: int, round: int, config: SessionDetailConfig):
+def _get_event_sessions_detailed(event, year: int, event_id: str, config: SessionDetailConfig):
     sessions = []
     for i in range(1, 6):
         name = event.get(f"Session{i}")
         date = event.get(f"Session{i}Date")
         if not name or str(name).strip() == "":
             continue
+        if pd.isna(date):
+            continue
         identifier = SESSION_NAME_TO_IDENTIFIER.get(name, name)
         status = _event_status(date)
         weather = None
         fastest_lap = None
         if status == "completed" and (config.weather or config.laps):
-            weather, fastest_lap = _get_session_data(year, round, identifier, config)
-        start_time = str(date.time())[:5] if hasattr(date, "time") else None
+            weather, fastest_lap = _get_session_data(year, event_id, identifier, config)
+        start_time = str(date.time())[:5]
         duration = SESSION_DURATION_MINUTES.get(identifier, 60)
-        end_dt = date + timedelta(minutes=duration) if hasattr(date, "time") else None
+        end_dt = date + timedelta(minutes=duration)
         end_time = str(end_dt.time())[:5] if end_dt else None
 
         sessions.append({
             "name": name,
             "identifier": identifier,
-            "date": str(date.date()) if hasattr(date, "date") else str(date),
+            "date": str(date.date()),
             "start_time": start_time,
             "end_time": end_time,
             "status": status,
@@ -368,10 +385,10 @@ def _get_round_sessions_detailed(event, year: int, round: int, config: SessionDe
     return sessions
 
 
-def _get_session_data(year: int, round: int, identifier: str, config: SessionDetailConfig):
+def _get_session_data(year: int, event_id: str, identifier: str, config: SessionDetailConfig):
     try:
-        session = fastf1.get_session(year, round, identifier)
-        locked_load(session, year, round, identifier, laps=config.laps, telemetry=False, messages=False, weather=config.weather)
+        session = resolve_session(year, event_id, identifier)
+        locked_load(session, year, event_id, identifier, laps=config.laps, telemetry=False, messages=False, weather=config.weather)
 
         weather = None
         w = session.weather_data if config.weather else None

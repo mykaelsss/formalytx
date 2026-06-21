@@ -5,7 +5,7 @@ import { DriverLaps } from "../types";
 
 export function useSessionLaps(
   year: string,
-  round: string,
+  event: string,
   session: string,
   drivers: string[],
   staleTime: number = Infinity,
@@ -25,9 +25,9 @@ export function useSessionLaps(
 
   return useQueries({
     queries: drivers.map((driver) => ({
-      queryKey: ["sessionLaps", year, round, session, driver],
-      queryFn: () => fetchSessionLaps(year, round, session, driver),
-      enabled: !!year && !!round && !!session && !!driver,
+      queryKey: ["sessionLaps", year, event, session, driver],
+      queryFn: () => fetchSessionLaps(year, event, session, driver),
+      enabled: !!year && !!event && !!session && !!driver,
       staleTime,
     })),
     combine

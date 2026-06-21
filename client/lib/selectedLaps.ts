@@ -14,13 +14,13 @@ export function parseSelectedLaps(laps: string): SelectedLap[] {
   const selected: SelectedLap[] = [];
   const seen = new Set<string>();
   for (const entry of laps.split("|")) {
-    const [year, round, session, driver, lapsStr] = entry.split(":");
-    if (!year || !round || !session || !driver || !lapsStr) continue;
+    const [year, event, session, driver, lapsStr] = entry.split(":");
+    if (!year || !event || !session || !driver || !lapsStr) continue;
     const lapNumbers = lapsStr.split(",").map(Number)
     const uniqueLapNumbers = Array.from((new Set(lapNumbers)))
     for (const n of uniqueLapNumbers) {
       if (!Number.isInteger(n) || n <= 0) continue;
-      const lap = { year, round, session, driver, lap: n };
+      const lap = { year, event, session, driver, lap: n };
       const key = seriesKey(lap);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -33,7 +33,7 @@ export function parseSelectedLaps(laps: string): SelectedLap[] {
 export function serializeSelectedLaps(selected: SelectedLap[]): string {
   const groups = new Map<string, number[]>();
   for (const l of selected) {
-    const gk = `${l.year}:${l.round}:${l.session}:${l.driver}`;
+    const gk = `${l.year}:${l.event}:${l.session}:${l.driver}`;
     const laps = groups.get(gk);
     if (laps) laps.push(l.lap);
     else groups.set(gk, [l.lap]);
@@ -51,13 +51,13 @@ export function isLapSelected(
   return selected.some((l) => seriesKey(l) === key);
 }
 
-type SessionContext = { year: string; round: string; session: string };
+type SessionContext = { year: string; event: string; session: string };
 
 async function circuitLocation(queryClient: QueryClient, ctx: SessionContext) {
   return queryClient
     .fetchQuery({
-      queryKey: ["session", ctx.year, ctx.round, ctx.session],
-      queryFn: () => fetchSession(ctx.year, ctx.round, ctx.session),
+      queryKey: ["session", ctx.year, ctx.event, ctx.session],
+      queryFn: () => fetchSession(ctx.year, ctx.event, ctx.session),
       staleTime: Infinity,
     })
     .then((data) => data.location);
@@ -71,8 +71,8 @@ export async function ensureSameCircuit(
 ): Promise<boolean> {
   const otherEvents = new Map<string, SelectedLap>();
   for (const l of existing) {
-    if (l.year === ctx.year && l.round === ctx.round) continue;
-    otherEvents.set(`${l.year}:${l.round}`, l);
+    if (l.year === ctx.year && l.event === ctx.event) continue;
+    otherEvents.set(`${l.year}:${l.event}`, l);
   }
   if (otherEvents.size === 0) return true;
   let mismatched: Set<string>;
@@ -89,7 +89,7 @@ export async function ensureSameCircuit(
     return true;
   }
   if (mismatched.size === 0) return true;
-  const kept = existing.filter((l) => !mismatched.has(`${l.year}:${l.round}`));
+  const kept = existing.filter((l) => !mismatched.has(`${l.year}:${l.event}`));
   toast.error("Laps from different circuits can't be compared", {
     id: "circuit-mismatch",
     className: "border-accent-red! flex-wrap! gap-y-2!",

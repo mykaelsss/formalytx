@@ -48,7 +48,7 @@ def _touch(path: str) -> None:
         pass
 
 
-def locked_load(session, year: int, round: int, identifier, **load_kwargs):
+def locked_load(session, year: int, event_id: str, identifier, **load_kwargs):
     """Serialize concurrent loads of the *same* session to avoid a cache stampede.
 
     Without this, two simultaneous requests for the same session both miss the
@@ -56,7 +56,7 @@ def locked_load(session, year: int, round: int, identifier, **load_kwargs):
     populates the cache while the rest wait on the key, then load from the warm
     cache. Loads of *different* sessions still run in parallel.
     """
-    with _lock_for((year, round, str(identifier).upper())):
+    with _lock_for((year, event_id, str(identifier).upper())):
         session.load(**load_kwargs)
     # Bump the session dir's mtime so eviction treats it as recently *used*,
     # not merely recently *written* (a cache hit never rewrites the pickle).

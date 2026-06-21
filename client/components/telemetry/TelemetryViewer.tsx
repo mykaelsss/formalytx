@@ -47,7 +47,7 @@ export default function TelemetryViewer() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const year = searchParams.get("year") ?? "";
-  const round = searchParams.get("round") ?? "";
+  const event = searchParams.get("event") ?? "";
   const laps = searchParams.get("laps") ?? "";
 
   const chartRef = useEcharts();
@@ -103,7 +103,7 @@ export default function TelemetryViewer() {
     });
   }
 
-  const { data: circuitData } = useCircuitInfo(year, round);
+  const { data: circuitData } = useCircuitInfo(year, event);
   const {
     data: telemetryData,
     isPending,
@@ -403,14 +403,14 @@ export default function TelemetryViewer() {
   const sessionContexts = useMemo(() => {
     const seen = new Map<
       string,
-      { year: string; round: string; session: string }
+      { year: string; event: string; session: string }
     >();
     for (const item of [...legendItems, ...pendingItems]) {
-      const key = `${item.year}:${item.round}:${item.session}`;
+      const key = `${item.year}:${item.event}:${item.session}`;
       if (!seen.has(key))
         seen.set(key, {
           year: item.year,
-          round: item.round,
+          event: item.event,
           session: item.session,
         });
     }
@@ -419,18 +419,18 @@ export default function TelemetryViewer() {
 
   const sessionLabels = useQueries({
     queries: sessionContexts.map((c) => ({
-      queryKey: ["session", c.year, c.round, c.session],
-      queryFn: () => fetchSession(c.year, c.round, c.session),
+      queryKey: ["session", c.year, c.event, c.session],
+      queryFn: () => fetchSession(c.year, c.event, c.session),
     })),
     combine: (results) =>
       new Map(
         sessionContexts.map((c, i) => {
           const data = results[i]?.data;
           return [
-            `${c.year}:${c.round}:${c.session}`,
+            `${c.year}:${c.event}:${c.session}`,
             data
               ? `${c.year} · ${data.event_name} · ${data.name}`
-              : `${c.year} · Round ${c.round} · ${c.session}`,
+              : `${c.year} · Event ${c.event} · ${c.session}`,
           ] as const;
         }),
       ),
@@ -438,11 +438,11 @@ export default function TelemetryViewer() {
 
   const sessionLabelFor = (item: {
     year: string;
-    round: string;
+    event: string;
     session: string;
   }) =>
-    sessionLabels.get(`${item.year}:${item.round}:${item.session}`) ??
-    `${item.year} · Round ${item.round} · ${item.session}`;
+    sessionLabels.get(`${item.year}:${item.event}:${item.session}`) ??
+    `${item.year} · Event ${item.event} · ${item.session}`;
 
   const fastestSelectedTime = useMemo(() => {
     const times = legendItems

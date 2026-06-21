@@ -5,6 +5,7 @@ import pandas as pd
 
 from app.schedule.services import SESSION_DURATION_MINUTES
 from app.sessions.services import IDENTIFIER_MAP
+from app.utils import resolve_event
 
 # Once a session ends, lap/telemetry data is fixed, but classification can still
 # shift for a while as stewards apply penalties/DSQs. Hold off on immutable
@@ -13,11 +14,11 @@ SETTLE_BUFFER = timedelta(days=2)
 
 LIVE = "public, max-age=60"
 SETTLING = "public, max-age=300"
-IMMUTABLE = "public, max-age=31536000, immutable"
+PAST_SEASON = "public, max-age=86400, stale-while-revalidate=604800"
 
 
-def _session_end(year: int, round: int, identifier: str) -> datetime | None:
-    event = fastf1.get_event(year, round)
+def _session_end(year: int, event_id: str, identifier: str | int) -> datetime | None:
+    event = resolve_event(year, event_id)
     name = IDENTIFIER_MAP.get(identifier.upper(), identifier)
     for i in range(1, 6):
         if event.get(f"Session{i}") != name:
@@ -32,10 +33,10 @@ def _session_end(year: int, round: int, identifier: str) -> datetime | None:
     return None
 
 
-def cache_control_for(year: int, round: int, identifier: str) -> str:
+def cache_control_for(year: int, event_id: str, identifier: str) -> str:
     """Cache-Control for a single session's data, gated on when it finalizes."""
     try:
-        end = _session_end(year, round, identifier)
+        end = _session_end(year, event_id, identifier)
     except Exception:
         return SETTLING
     if end is None:
@@ -45,10 +46,10 @@ def cache_control_for(year: int, round: int, identifier: str) -> str:
         return LIVE
     if now < end + SETTLE_BUFFER:
         return SETTLING
-    return IMMUTABLE
+    return PAST_SEASON
 
 
 def cache_control_for_year(year: int) -> str:
     """Cache-Control for the season schedule list. Past seasons are fixed; the
     current/future season's per-event status flips over time, so keep it short."""
-    return IMMUTABLE if year < datetime.now(timezone.utc).year else SETTLING
+    return PAST_SEASON if year < datetime.now(timezone.utc).year else SETTLING

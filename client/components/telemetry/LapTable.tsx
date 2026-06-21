@@ -7,9 +7,9 @@ import { useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
-import { useRoundSchedule } from "@/lib/hooks/useRoundSchedule";
 import { toggleLap, parseSelectedLaps, isLapSelected } from "@/lib/selectedLaps";
 import { lapTimeToMs } from "@/lib/format";
+import { useEventSchedule } from "@/lib/hooks/useEventSchedule";
 
 function formatDelta(ms: number): string {
   return `+${(ms / 1000).toFixed(3)}`;
@@ -25,7 +25,7 @@ export default function LapTable({ teams }: LapTableProps) {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const year = searchParams.get("year") ?? "";
-  const round = searchParams.get("round") ?? "";
+  const event = searchParams.get("event") ?? "";
   const session = searchParams.get("session") ?? "";
   const drivers = searchParams.get("drivers") ?? "";
   const laps = searchParams.get("laps") ?? "";
@@ -37,11 +37,11 @@ export default function LapTable({ teams }: LapTableProps) {
 
   const selectedLaps = useMemo(() => parseSelectedLaps(laps), [laps]);
 
-  const { data: roundSchedule } = useRoundSchedule(year, round);
-  const sessionStatus = roundSchedule?.sessions.find((s) => s.identifier === session)?.status;
+  const { data: eventSchedule } = useEventSchedule(year, event);
+  const sessionStatus = eventSchedule?.sessions.find((s) => s.identifier === session)?.status;
   const staleTime = sessionStatus === "completed" ? Infinity : 60_000;
 
-  const { driverLaps, isLoading: isLoadingLaps } = useSessionLaps(year, round, session, selectedDrivers, staleTime);
+  const { driverLaps, isLoading: isLoadingLaps } = useSessionLaps(year, event, session, selectedDrivers, staleTime);
 
   const visibleLaps = useMemo(
     () => driverLaps.filter((d) => selectedDrivers.includes(d.abbreviation)),
@@ -184,7 +184,7 @@ export default function LapTable({ teams }: LapTableProps) {
                     const isInvalid = lap.lap_time === null;
                     const isOnChart = isLapSelected(selectedLaps, {
                       year,
-                      round,
+                      event,
                       session,
                       driver: abbreviation,
                       lap: lapNumber,
@@ -204,7 +204,7 @@ export default function LapTable({ teams }: LapTableProps) {
                             selectedLaps,
                             {
                               year,
-                              round,
+                              event,
                               session,
                               driver: abbreviation,
                               lap: lapNumber,

@@ -29,7 +29,7 @@ export function useLapTelemetry(
         return (r.data ?? []).map((lap) => ({
           ...lap,
           year: entry.year,
-          round: entry.round,
+          event: entry.event,
           session: entry.session,
         }));
       }),
@@ -46,9 +46,9 @@ export function useLapTelemetry(
 
   return useQueries({
     queries: selectedLaps.map((l) => ({
-      queryKey: ["lapTelemetry", l.year, l.round, l.session, l.driver, l.lap],
+      queryKey: ["lapTelemetry", l.year, l.event, l.session, l.driver, l.lap],
       queryFn: () =>
-        fetchLapTelemetry(l.year, l.round, l.session, `${l.driver}:${l.lap}`),
+        fetchLapTelemetry(l.year, l.event, l.session, `${l.driver}:${l.lap}`),
       enabled,
       staleTime,
     })),

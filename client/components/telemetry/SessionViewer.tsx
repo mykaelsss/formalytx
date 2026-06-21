@@ -20,7 +20,7 @@ export default function SessionViewer() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const year = searchParams.get("year") ?? "";
-  const round = searchParams.get("round") ?? "";
+  const event = searchParams.get("event") ?? "";
   const session = searchParams.get("session") ?? "";
   const drivers = searchParams.get("drivers") ?? "";
 
@@ -29,7 +29,7 @@ export default function SessionViewer() {
     [drivers],
   );
 
-  const { data: sessionData, isLoading: isLoadingSession } = useSession(year, round, session);
+  const { data: sessionData, isLoading: isLoadingSession } = useSession(year, event, session);
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
 

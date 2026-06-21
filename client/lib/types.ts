@@ -4,8 +4,9 @@ export type PodiumEntry = {
   time: string;
 }
 
-export type ScheduleRound = {
+export type ScheduleEvent = {
   country: string,
+  identifier: string,
   event_date_start: string,
   event_date_end: string,
   event_format: string,
@@ -19,7 +20,7 @@ export type ScheduleRound = {
 
 export type Schedule = {
   year: number,
-  rounds: ScheduleRound[]
+  events: ScheduleEvent[]
 }
 
 export type Weather = {
@@ -41,8 +42,9 @@ export type Session = {
   fastest_lap: string | null;
 }
 
-export type RoundSchedule = {
+export type EventSchedule = {
   round: number;
+  identifier: string;
   year: number;
   name: string;
   country: string;
@@ -85,13 +87,13 @@ export type LapTelemetry = {
 
 export type LapTelemetryWithSession = LapTelemetry & {
   year: string
-  round: string
+  event: string
   session: string
 }
 
 export type SelectedLap = {
   year: string
-  round: string
+  event: string
   session: string
   driver: string
   lap: number

@@ -10,7 +10,7 @@ import { useChartSettings } from "@/lib/hooks/useChartSettings";
 import { CHART_STORAGE_KEYS } from "@/lib/constants";
 import { toggleLap, parseSelectedLaps } from "@/lib/selectedLaps";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
-import { useRoundSchedule } from "@/lib/hooks/useRoundSchedule";
+import { useEventSchedule } from "@/lib/hooks/useEventSchedule";
 import { useQueryClient } from "@tanstack/react-query";
 import TyreBadge from "./TyreBadge";
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -45,7 +45,7 @@ export default function LapChart({ teams }: LapChartProps) {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const year = searchParams.get("year") ?? "";
-  const round = searchParams.get("round") ?? "";
+  const event = searchParams.get("event") ?? "";
   const session = searchParams.get("session") ?? "";
   const drivers = searchParams.get("drivers") ?? "";
   const laps = searchParams.get("laps") ?? "";
@@ -61,15 +61,15 @@ export default function LapChart({ teams }: LapChartProps) {
     [teams],
   );
 
-  const { data: roundSchedule } = useRoundSchedule(year, round);
-  const sessionStatus = roundSchedule?.sessions.find(
+  const { data: eventSchedule } = useEventSchedule(year, event);
+  const sessionStatus = eventSchedule?.sessions.find(
     (s) => s.identifier === session,
   )?.status;
   const staleTime = sessionStatus === "completed" ? Infinity : 60_000;
 
   const { driverLaps, isLoading: isLoadingLaps } = useSessionLaps(
     year,
-    round,
+    event,
     session,
     selectedDrivers,
     staleTime,
@@ -246,14 +246,14 @@ export default function LapChart({ teams }: LapChartProps) {
     }) => {
       toggleLap(
         selectedLaps,
-        { year, round, session, driver: seriesName, lap: value[0] },
+        { year, event, session, driver: seriesName, lap: value[0] },
         { router, pathname, searchParams, queryClient },
       );
     },
     [
       selectedLaps,
       year,
-      round,
+      event,
       session,
       pathname,
       router,

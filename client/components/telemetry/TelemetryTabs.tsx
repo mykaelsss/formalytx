@@ -31,7 +31,7 @@ export default function TelemetryTabs({ activeTab: initialTab }: TelemetryTabsPr
   const router = useRouter();
   const searchParams = useSearchParams();
   const year = searchParams.get("year") ?? "";
-  const round = searchParams.get("round") ?? "";
+  const event = searchParams.get("event") ?? "";
   const session = searchParams.get("session") ?? "";
   const laps = searchParams.get("laps") ?? "";
   const activeTab = searchParams.get("tab") ?? initialTab;
@@ -54,7 +54,7 @@ export default function TelemetryTabs({ activeTab: initialTab }: TelemetryTabsPr
 
   const { data: sessionData, isFetching: isLoadingSession } = useSession(
     year,
-    round,
+    event,
     session,
   );
 
