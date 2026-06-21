@@ -1,4 +1,5 @@
 import fastf1
+import pandas as pd
 from typing import Literal
 from fastapi import HTTPException
 
@@ -27,3 +28,12 @@ def resolve_session(year: int, event_id: str, identifier: str):
         fastf1.get_testing_session(year, number, identifier) if kind == "test"
         else fastf1.get_session(year, number, identifier)
     )
+
+
+def format_lap_time(td) -> str | None:
+    if td is None or pd.isna(td):
+        return None
+    secs = pd.Timedelta(td).total_seconds()
+    m = int(secs // 60)
+    s = secs % 60
+    return f"{m}:{s:06.3f}"

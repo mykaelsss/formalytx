@@ -37,20 +37,20 @@ def get_settings():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-      settings = get_settings()
-      os.makedirs(settings.fastf1_cache_dir, exist_ok=True)
-      fastf1.Cache.enable_cache(settings.fastf1_cache_dir)
-      set_cache_dir(settings.fastf1_cache_dir)
-      stop_pruner = start_pruner(
-          settings.fastf1_cache_dir,
-          settings.cache_high_water,
-          settings.cache_low_water,
-          settings.cache_prune_interval_seconds,
-      )
-      try:
-          yield
-      finally:
-          stop_pruner.set()
+    settings = get_settings()
+    os.makedirs(settings.fastf1_cache_dir, exist_ok=True)
+    fastf1.Cache.enable_cache(settings.fastf1_cache_dir)
+    set_cache_dir(settings.fastf1_cache_dir)
+    stop_pruner = start_pruner(
+        settings.fastf1_cache_dir,
+        settings.cache_high_water,
+        settings.cache_low_water,
+        settings.cache_prune_interval_seconds,
+    )
+    try:
+        yield
+    finally:
+        stop_pruner.set()
 
 app = FastAPI(lifespan=lifespan)
 

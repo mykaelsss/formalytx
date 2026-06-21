@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 from fastf1.core import Session
 from dataclasses import dataclass
-from app.utils import resolve_event, resolve_session
+from app.utils import format_lap_time, resolve_event, resolve_session
 
 from app.fastf1_loader import locked_load
 
@@ -142,7 +142,7 @@ def _qualifying_results(session: Session):
                 "team": str(info['TeamName']) if info is not None else '',
                 "team_color": str(info['TeamColor']) if info is not None else '',
                 "grid": None, "laps": None, "time": None,
-                "q1": _format_lap_time(row['LapTime']),
+                "q1": format_lap_time(row['LapTime']),
                 "q2": None, "q3": None,
                 "status": None, "points": 0.0,
             })
@@ -157,9 +157,9 @@ def _qualifying_results(session: Session):
             "team": str(row.get('TeamName', '')),
             "team_color": str(row.get('TeamColor', '')),
             "grid": None, "laps": None, "time": None,
-            "q1": _format_lap_time(row.get('Q1')),
-            "q2": _format_lap_time(row.get('Q2')),
-            "q3": _format_lap_time(row.get('Q3')),
+            "q1": format_lap_time(row.get('Q1')),
+            "q2": format_lap_time(row.get('Q2')),
+            "q3": format_lap_time(row.get('Q3')),
             "status": None, "points": 0.0,
         })
     return rows
@@ -206,94 +206,80 @@ def _practice_results(session: Session):
         })
     return rows
 
-def _format_lap_time(td) -> str | None:
-    if td is None or pd.isna(td):
-        return None
-    secs = pd.Timedelta(td).total_seconds()
-    m = int(secs // 60)
-    s = secs % 60
-    return f"{m}:{s:06.3f}"
-
 def get_podium(year: int, event_id: str):
-    try:
-        session = resolve_session(year, event_id, 'R')
-        locked_load(session, year, event_id, 'R', telemetry=False, weather=False, messages=False)
-        results = session.results
+    session = resolve_session(year, event_id, 'R')
+    locked_load(session, year, event_id, 'R', telemetry=False, weather=False, messages=False)
+    results = session.results
 
-        # Normalise Position to numeric — older years may have strings or floats
-        results = results.copy()
-        results['Position'] = pd.to_numeric(results['Position'], errors='coerce')
-        results = results.dropna(subset=['Position'])
-        results = results.sort_values('Position').head(3)
+    # Normalise Position to numeric — older years may have strings or floats
+    results = results.copy()
+    results['Position'] = pd.to_numeric(results['Position'], errors='coerce')
+    results = results.dropna(subset=['Position'])
+    results = results.sort_values('Position').head(3)
 
-        podium = []
-        for _, row in results.iterrows():
-            position = int(row['Position'])
+    podium = []
+    for _, row in results.iterrows():
+        position = int(row['Position'])
 
-            # Driver code: prefer Abbreviation, fall back to BroadcastName initials or DriverNumber
-            code = str(row.get('Abbreviation', '') or '').strip()
-            if not code or code == 'nan':
-                broadcast = str(row.get('BroadcastName', '') or '').strip()
-                code = broadcast.split()[-1][:3].upper() if broadcast and broadcast != 'nan' else str(int(row.get('DriverNumber', position)))
+        # Driver code: prefer Abbreviation, fall back to BroadcastName initials or DriverNumber
+        code = str(row.get('Abbreviation', '') or '').strip()
+        if not code or code == 'nan':
+            broadcast = str(row.get('BroadcastName', '') or '').strip()
+            code = broadcast.split()[-1][:3].upper() if broadcast and broadcast != 'nan' else str(int(row.get('DriverNumber', position)))
 
-            # Time: winner gets total race time, others get gap
-            time_val = row.get('Time')
-            if time_val is not None and not (isinstance(time_val, float) and pd.isna(time_val)):
-                try:
-                    secs = pd.Timedelta(time_val).total_seconds()
-                    if position == 1:
-                        h = int(secs // 3600)
-                        m = int((secs % 3600) // 60)
-                        s = secs % 60
-                        time_str = f"{h}:{m:02d}:{s:06.3f}"
-                    else:
-                        time_str = f"+{secs:.3f}s"
-                except Exception:
-                    time_str = str(row.get('Status', ''))
-            else:
+        # Time: winner gets total race time, others get gap
+        time_val = row.get('Time')
+        if time_val is not None and not (isinstance(time_val, float) and pd.isna(time_val)):
+            try:
+                secs = pd.Timedelta(time_val).total_seconds()
+                if position == 1:
+                    h = int(secs // 3600)
+                    m = int((secs % 3600) // 60)
+                    s = secs % 60
+                    time_str = f"{h}:{m:02d}:{s:06.3f}"
+                else:
+                    time_str = f"+{secs:.3f}s"
+            except Exception:
                 time_str = str(row.get('Status', ''))
+        else:
+            time_str = str(row.get('Status', ''))
 
-            podium.append({"position": position, "code": code, "time": time_str})
+        podium.append({"position": position, "code": code, "time": time_str})
 
-        return podium
-    except Exception:
-        return []
+    return podium
 
 
 def get_circuit_info(year: int, event_id: str):
+    identifier = 1
+    session = resolve_session(year, event_id, identifier)
+    locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
+    circuit_info = session.get_circuit_info()
+
+    sector_distances = []
     try:
-        identifier = 1
-        session = resolve_session(year, event_id, identifier)
-        locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
-        circuit_info = session.get_circuit_info()
+        fastest_lap = session.laps.pick_fastest()
+        if fastest_lap is not None:
+            s1 = fastest_lap.get("Sector1Time")
+            s2 = fastest_lap.get("Sector2Time")
+            if s1 is not None and s2 is not None and not pd.isna(s1) and not pd.isna(s2):
+                tel = fastest_lap.get_telemetry()
+                if tel is not None and not tel.empty:
+                    tel_time = tel["Time"].dt.total_seconds()
+                    s1_secs = pd.Timedelta(s1).total_seconds()
+                    s2_secs = s1_secs + pd.Timedelta(s2).total_seconds()
+                    for t in [s1_secs, s2_secs]:
+                        mask = tel_time >= t
+                        if mask.any():
+                            sector_distances.append(float(tel.loc[mask.idxmax(), "Distance"]))
+    except Exception:
+        logger.exception("Error computing sector distances")
 
-        sector_distances = []
-        try:
-            fastest_lap = session.laps.pick_fastest()
-            if fastest_lap is not None:
-                s1 = fastest_lap.get("Sector1Time")
-                s2 = fastest_lap.get("Sector2Time")
-                if s1 is not None and s2 is not None and not pd.isna(s1) and not pd.isna(s2):
-                    tel = fastest_lap.get_telemetry()
-                    if tel is not None and not tel.empty:
-                        tel_time = tel["Time"].dt.total_seconds()
-                        s1_secs = pd.Timedelta(s1).total_seconds()
-                        s2_secs = s1_secs + pd.Timedelta(s2).total_seconds()
-                        for t in [s1_secs, s2_secs]:
-                            mask = tel_time >= t
-                            if mask.any():
-                                sector_distances.append(float(tel.loc[mask.idxmax(), "Distance"]))
-        except Exception:
-            logger.exception("Error computing sector distances")
-
-        return {
-            "rotation": circuit_info.rotation,
-            "corners": circuit_info.corners[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
-            "marshal_sectors": circuit_info.marshal_sectors[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
-            "sector_distances": sector_distances,
-        }
-    except Exception as e:
-        return {"available": False, "error": str(e)}
+    return {
+        "rotation": circuit_info.rotation,
+        "corners": circuit_info.corners[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
+        "marshal_sectors": circuit_info.marshal_sectors[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
+        "sector_distances": sector_distances,
+    }
 
 def get_event(year: int, event_id: str):
     event = resolve_event(year, event_id)
@@ -406,14 +392,9 @@ def _get_session_data(year: int, event_id: str, identifier: str, config: Session
             lap = session.laps.pick_fastest()
             try:
                 if lap is not None:
-                    td = pd.Timedelta(lap["LapTime"])
-                    total = td.total_seconds()
-                    minutes = int(total // 60)
-                    seconds = total % 60
-                    fastest_lap = f"{minutes}:{seconds:06.3f}"
+                    fastest_lap = format_lap_time(lap.get("LapTime"))
             except Exception:
                 logger.exception("Error in _get_session_data trying to format lap time")
-                return None, None
 
         return weather, fastest_lap
     except Exception:

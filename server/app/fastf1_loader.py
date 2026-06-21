@@ -4,12 +4,31 @@ import shutil
 import threading
 import time
 import uuid
+import weakref
 
 logger = logging.getLogger("uvicorn.error")
 
+
+class _SessionLock:
+    """Plain wrapper around threading.Lock so WeakValueDictionary can track it.
+    The built-in Lock doesn't support weak references."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+
+    def __enter__(self):
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self._lock.release()
+
+
 # One lock per session key. Routes run in FastAPI's threadpool (sync handlers),
-# so a threading.Lock is the right primitive here — not asyncio.Lock.
-_locks: dict[tuple, threading.Lock] = {}
+# so a threading.Lock is the right primitive here — not asyncio.Lock. Held
+# weakly so entries vanish once no in-flight request references them; without
+# this the dict grows by one entry per unique (year, event_id, identifier) seen.
+_locks: "weakref.WeakValueDictionary[tuple, _SessionLock]" = weakref.WeakValueDictionary()
 _locks_guard = threading.Lock()
 
 _active_cache_dir: str | None = None
@@ -22,11 +41,12 @@ def set_cache_dir(cache_dir: str) -> None:
     _active_cache_dir = cache_dir
 
 
-def _lock_for(key: tuple) -> threading.Lock:
+def _lock_for(key: tuple) -> _SessionLock:
     with _locks_guard:
         lock = _locks.get(key)
         if lock is None:
-            lock = _locks[key] = threading.Lock()
+            lock = _SessionLock()
+            _locks[key] = lock
         return lock
 
 

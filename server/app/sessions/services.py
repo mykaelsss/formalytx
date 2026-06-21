@@ -3,7 +3,7 @@ import pandas as pd
 from fastf1.core import Laps
 import numpy as np
 from fastapi import HTTPException
-from app.utils import resolve_event, resolve_session
+from app.utils import format_lap_time, resolve_event, resolve_session
 
 from app.fastf1_loader import locked_load
 
@@ -62,23 +62,15 @@ def get_session(year: int, event_id: str, identifier: str):
         "drivers": drivers
     }
 
-def _format_lap_time(td) -> str | None:
-    if td is None or pd.isna(td):
-        return None
-    secs = pd.Timedelta(td).total_seconds()
-    m = int(secs // 60)
-    s = secs % 60
-    return f"{m}:{s:06.3f}"
-
 def _format_laps(driver_laps: Laps) -> list:
     laps = []
     for _, lap in driver_laps.iterrows():
         laps.append({
             "lap_number": int(lap["LapNumber"]) if not pd.isna(lap.get("LapNumber")) else None,
-            "lap_time": _format_lap_time(lap.get("LapTime")),
-            "sector1": _format_lap_time(lap.get("Sector1Time")),
-            "sector2": _format_lap_time(lap.get("Sector2Time")),
-            "sector3": _format_lap_time(lap.get("Sector3Time")),
+            "lap_time": format_lap_time(lap.get("LapTime")),
+            "sector1": format_lap_time(lap.get("Sector1Time")),
+            "sector2": format_lap_time(lap.get("Sector2Time")),
+            "sector3": format_lap_time(lap.get("Sector3Time")),
             "compound": str(lap.get("Compound", "")) or None,
             "is_personal_best": bool(lap.get("IsPersonalBest", False)),
         })
@@ -115,10 +107,10 @@ def load_session(year: int, round: int, identifier: str):
         for _, lap in driver_laps.iterrows():
             laps.append({
                 "lap_number": int(lap["LapNumber"]) if not pd.isna(lap.get("LapNumber")) else None,
-                "lap_time": _format_lap_time(lap.get("LapTime")),
-                "sector1": _format_lap_time(lap.get("Sector1Time")),
-                "sector2": _format_lap_time(lap.get("Sector2Time")),
-                "sector3": _format_lap_time(lap.get("Sector3Time")),
+                "lap_time": format_lap_time(lap.get("LapTime")),
+                "sector1": format_lap_time(lap.get("Sector1Time")),
+                "sector2": format_lap_time(lap.get("Sector2Time")),
+                "sector3": format_lap_time(lap.get("Sector3Time")),
                 "compound": str(lap.get("Compound", "")) or None,
                 "is_personal_best": bool(lap.get("IsPersonalBest", False)),
             })

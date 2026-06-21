@@ -4,7 +4,7 @@ services:
       ports:
         - "8000:8000"
       environment:
-        - UV_NO_DEV=0
+        - UV_NO_DEV=1
       user: root
       develop:
         watch:
