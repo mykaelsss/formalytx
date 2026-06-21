@@ -1,6 +1,5 @@
 from datetime import datetime, timezone, timedelta
 
-import fastf1
 import pandas as pd
 
 from app.schedule.services import SESSION_DURATION_MINUTES

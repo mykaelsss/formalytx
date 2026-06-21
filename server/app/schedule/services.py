@@ -1,3 +1,4 @@
+import collections
 import logging
 
 import fastf1
@@ -5,11 +6,15 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 from fastf1.core import Session
 from dataclasses import dataclass
-from app.utils import format_lap_time, resolve_event, resolve_session
+from app.utils import KeyLockRegistry, format_lap_time, resolve_event, resolve_session
 
-from app.fastf1_loader import locked_load
+from app.fastf1_loader import cached_locked_load
 
 logger = logging.getLogger("uvicorn.error")
+
+_CIRCUIT_CACHE_MAX = 64
+_circuit_cache: "collections.OrderedDict[tuple, dict]" = collections.OrderedDict()
+_circuit_locks = KeyLockRegistry()
 
 @dataclass
 class SessionDetailConfig:
@@ -69,13 +74,13 @@ def get_results(year: int, event_id: str, identifier: str):
     session = resolve_session(year, event_id, identifier)
     uid = identifier.upper()
     if uid in {"FP1", "FP2", "FP3"}:
-        locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
+        session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
         return _practice_results(session)
     elif uid in {"Q", "SQ"}:
-        locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
+        session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
         return _qualifying_results(session)
     else:
-        locked_load(session, year, event_id, identifier, laps=False, telemetry=False, weather=False, messages=False)
+        session = cached_locked_load(session, year, event_id, identifier, laps=False, telemetry=False, weather=False, messages=False)
         return _race_results(session)
 
 
@@ -208,7 +213,7 @@ def _practice_results(session: Session):
 
 def get_podium(year: int, event_id: str):
     session = resolve_session(year, event_id, 'R')
-    locked_load(session, year, event_id, 'R', telemetry=False, weather=False, messages=False)
+    session = cached_locked_load(session, year, event_id, 'R', telemetry=False, weather=False, messages=False)
     results = session.results
 
     # Normalise Position to numeric — older years may have strings or floats
@@ -250,36 +255,46 @@ def get_podium(year: int, event_id: str):
 
 
 def get_circuit_info(year: int, event_id: str):
-    identifier = 1
-    session = resolve_session(year, event_id, identifier)
-    locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
-    circuit_info = session.get_circuit_info()
+    key = (year, event_id)
+    with _circuit_locks.get(key):
+        cached = _circuit_cache.get(key)
+        if cached is not None:
+            _circuit_cache.move_to_end(key)
+            return cached
+        identifier = 1
+        session = resolve_session(year, event_id, identifier)
+        session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
+        circuit_info = session.get_circuit_info()
 
-    sector_distances = []
-    try:
-        fastest_lap = session.laps.pick_fastest()
-        if fastest_lap is not None:
-            s1 = fastest_lap.get("Sector1Time")
-            s2 = fastest_lap.get("Sector2Time")
-            if s1 is not None and s2 is not None and not pd.isna(s1) and not pd.isna(s2):
-                tel = fastest_lap.get_telemetry()
-                if tel is not None and not tel.empty:
-                    tel_time = tel["Time"].dt.total_seconds()
-                    s1_secs = pd.Timedelta(s1).total_seconds()
-                    s2_secs = s1_secs + pd.Timedelta(s2).total_seconds()
-                    for t in [s1_secs, s2_secs]:
-                        mask = tel_time >= t
-                        if mask.any():
-                            sector_distances.append(float(tel.loc[mask.idxmax(), "Distance"]))
-    except Exception:
-        logger.exception("Error computing sector distances")
+        sector_distances = []
+        try:
+            fastest_lap = session.laps.pick_fastest()
+            if fastest_lap is not None:
+                s1 = fastest_lap.get("Sector1Time")
+                s2 = fastest_lap.get("Sector2Time")
+                if s1 is not None and s2 is not None and not pd.isna(s1) and not pd.isna(s2):
+                    tel = fastest_lap.get_telemetry()
+                    if tel is not None and not tel.empty:
+                        tel_time = tel["Time"].dt.total_seconds()
+                        s1_secs = pd.Timedelta(s1).total_seconds()
+                        s2_secs = s1_secs + pd.Timedelta(s2).total_seconds()
+                        for t in [s1_secs, s2_secs]:
+                            mask = tel_time >= t
+                            if mask.any():
+                                sector_distances.append(float(tel.loc[mask.idxmax(), "Distance"]))
+        except Exception:
+            logger.exception("Error computing sector distances")
 
-    return {
-        "rotation": circuit_info.rotation,
-        "corners": circuit_info.corners[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
-        "marshal_sectors": circuit_info.marshal_sectors[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
-        "sector_distances": sector_distances,
-    }
+        result = {
+            "rotation": circuit_info.rotation,
+            "corners": circuit_info.corners[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
+            "marshal_sectors": circuit_info.marshal_sectors[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
+            "sector_distances": sector_distances,
+        }
+        _circuit_cache[key] = result
+        while len(_circuit_cache) > _CIRCUIT_CACHE_MAX:
+            _circuit_cache.popitem(last=False)
+        return result
 
 def get_event(year: int, event_id: str):
     event = resolve_event(year, event_id)
@@ -374,7 +389,7 @@ def _get_event_sessions_detailed(event, year: int, event_id: str, config: Sessio
 def _get_session_data(year: int, event_id: str, identifier: str, config: SessionDetailConfig):
     try:
         session = resolve_session(year, event_id, identifier)
-        locked_load(session, year, event_id, identifier, laps=config.laps, telemetry=False, messages=False, weather=config.weather)
+        session = cached_locked_load(session, year, event_id, identifier, laps=config.laps, telemetry=False, messages=False, weather=config.weather)
 
         weather = None
         w = session.weather_data if config.weather else None

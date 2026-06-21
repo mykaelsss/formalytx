@@ -35,9 +35,17 @@ f1_telemetry/
     ├── app/
     │   ├── main.py            # App entry, middleware, error handlers
     │   ├── config.py          # Settings (env vars via pydantic-settings)
-    │   ├── sessions/          # Session info, driver laps, telemetry endpoints
+    │   ├── caching.py         # HTTP Cache-Control header policy
+    │   ├── fastf1_loader.py   # In-process Session cache + per-key load locks
+    │   ├── sessions/          # Session info, driver laps, telemetry
+    │   │   ├── routes.py
+    │   │   ├── services.py
+    │   │   └── schemas.py     # Pydantic response models
     │   ├── schedule/          # Season schedule, event details, results, podium
-    │   └── utils.py           # Event ID parsing and FastF1 routing helpers
+    │   │   ├── routes.py
+    │   │   ├── services.py
+    │   │   └── schemas.py     # Pydantic response models
+    │   └── utils.py           # Event ID parsing, FastF1 routing, KeyLockRegistry
     ├── compose.yaml
     ├── compose.override.yaml  # Dev overrides (hot-reload, exposed ports)
     ├── Dockerfile
@@ -63,6 +71,8 @@ f1_telemetry/
 - `GET /sessions/{year}/{event_id}/{identifier}/laps` — driver laps
 - `GET /sessions/{year}/{event_id}/{identifier}/laps/telemetry` — raw telemetry
 
+Every route declares a Pydantic `response_model=` — see `app/sessions/schemas.py` and `app/schedule/schemas.py`. Output is validated and filtered against the schema before it leaves the server, which gives the `/docs` reference an accurate shape for each response.
+
 FastAPI auto-generates an interactive endpoint reference at `/docs` when the server is running — treat that as the source of truth for params and response shapes.
 
 ---
@@ -82,14 +92,16 @@ Why: FastF1 assigns `RoundNumber = 0` to every testing event in a season, so rou
 
 - F1 data is sourced entirely from FastF1 — no live API, no separate database
 - Request → route → service → `resolve_session(year, event_id, identifier)` (in `app/utils.py`) → FastF1
-- FastF1 sessions are always loaded via `locked_load` in `app/fastf1_loader.py` — a per-key `threading.Lock` prevents concurrent loads of the same session from corrupting FastF1's on-disk cache
-- FastF1's cache lives in `server/cache/` (mounted as a volume in Docker Compose)
+- FastF1 sessions are loaded via `cached_locked_load` in `app/fastf1_loader.py`. A per-key lock (via `KeyLockRegistry` in `app/utils.py`) serializes concurrent loads of the same session, and the loaded `Session` is pinned in process memory (LRU 8) so repeat requests skip `session.load()` entirely
+- FastF1's on-disk cache lives in `server/cache/` (mounted as a volume in Docker Compose)
 
 ---
 
 ## Caching
 
-HTTP `Cache-Control` is set per-response in `app/caching.py`, gated on session state:
+### HTTP Cache-Control
+
+Set per-response in `app/caching.py`, gated on session state:
 
 - `LIVE` (`max-age=60`) — session in progress or hasn't ended yet
 - `SETTLING` (`max-age=300`) — session ended within the last 2 days; stewards may still apply penalties
@@ -98,6 +110,21 @@ HTTP `Cache-Control` is set per-response in `app/caching.py`, gated on session s
 Schedule list (`/schedule/{year}`): past years get `PAST_SEASON`, current/future year gets `SETTLING` (per-event status flips over time).
 
 Note: avoid `Cache-Control: immutable` on data endpoints. It pins responses in browser and edge caches indefinitely and bites hard when response shapes change — `stale-while-revalidate` gives long cache lifetimes with safe shape evolution.
+
+### In-process caches
+
+Sitting in front of the per-request work, each keyed by the parameters that determine the response. All bounded LRU, all guarded by a `KeyLockRegistry` (in `app/utils.py`) so concurrent requests for the same key serialize on the build instead of stampeding.
+
+| Cache | Module | Key | Cap |
+|---|---|---|---|
+| Loaded `Session` objects | `app/fastf1_loader.py` | `(year, event_id, identifier)` | 8 |
+| Driver-laps response | `app/sessions/services.py` | `(year, event_id, identifier, drivers)` | 256 |
+| Per-lap telemetry dict | `app/sessions/services.py` | `(year, event_id, identifier, driver, lap_number)` | 1024 |
+| Circuit response | `app/schedule/services.py` | `(year, event_id)` | 64 |
+
+The Session cache skips re-deserializing pandas DataFrames from FastF1's pickle cache. The per-lap telemetry cache skips the `get_car_data().add_distance()` + `.tolist()` work that dominates a cold telemetry response. The laps and circuit caches memoize the full response shape — cheap reads on repeat queries.
+
+These caches are process-local. If you ever run multiple uvicorn workers, each worker has its own; hit rate divides accordingly.
 
 ---
 

@@ -1,35 +1,19 @@
+import collections
 import logging
 import os
 import shutil
 import threading
 import time
 import uuid
-import weakref
+
+from app.utils import KeyLockRegistry
 
 logger = logging.getLogger("uvicorn.error")
 
+_SESSION_CACHE_MAX = 8
+_session_cache: "collections.OrderedDict[tuple, tuple]" = collections.OrderedDict()
+_session_locks = KeyLockRegistry()
 
-class _SessionLock:
-    """Plain wrapper around threading.Lock so WeakValueDictionary can track it.
-    The built-in Lock doesn't support weak references."""
-
-    def __init__(self):
-        self._lock = threading.Lock()
-
-    def __enter__(self):
-        self._lock.acquire()
-        return self
-
-    def __exit__(self, *exc):
-        self._lock.release()
-
-
-# One lock per session key. Routes run in FastAPI's threadpool (sync handlers),
-# so a threading.Lock is the right primitive here — not asyncio.Lock. Held
-# weakly so entries vanish once no in-flight request references them; without
-# this the dict grows by one entry per unique (year, event_id, identifier) seen.
-_locks: "weakref.WeakValueDictionary[tuple, _SessionLock]" = weakref.WeakValueDictionary()
-_locks_guard = threading.Lock()
 
 _active_cache_dir: str | None = None
 _prune_wake: threading.Event | None = None
@@ -39,15 +23,6 @@ _high_water: float = 0.0
 def set_cache_dir(cache_dir: str) -> None:
     global _active_cache_dir
     _active_cache_dir = cache_dir
-
-
-def _lock_for(key: tuple) -> _SessionLock:
-    with _locks_guard:
-        lock = _locks.get(key)
-        if lock is None:
-            lock = _SessionLock()
-            _locks[key] = lock
-        return lock
 
 
 def _session_cache_dir(session) -> str | None:
@@ -68,23 +43,43 @@ def _touch(path: str) -> None:
         pass
 
 
-def locked_load(session, year: int, event_id: str, identifier, **load_kwargs):
-    """Serialize concurrent loads of the *same* session to avoid a cache stampede.
+def cached_locked_load(session, year: int, event_id: str, identifier, **load_kwargs):
+    """Load a Session under a per-key lock and pin it in process memory keyed by
+    (year, event_id, identifier). Subsequent requests for the same key reuse the
+    already-loaded Session instead of rebuilding DataFrames via session.load().
+    Concurrent loads of the *same* session serialize on the per-key lock; loads
+    of *different* sessions run in parallel.
 
-    Without this, two simultaneous requests for the same session both miss the
-    FastF1 disk cache and both cold-fetch + write it. Here the first request
-    populates the cache while the rest wait on the key, then load from the warm
-    cache. Loads of *different* sessions still run in parallel.
+    Returns the Session to use — may differ from the passed-in `session` when a
+    cached instance is reused. Callers must consume the return value.
+
+    If the cached Session is missing data the new request needs, those flags are
+    loaded incrementally on the cached instance.
     """
-    with _lock_for((year, event_id, str(identifier).upper())):
-        session.load(**load_kwargs)
-    # Bump the session dir's mtime so eviction treats it as recently *used*,
-    # not merely recently *written* (a cache hit never rewrites the pickle).
+    key = (year, event_id, str(identifier).upper())
+    requested = frozenset(k for k, v in load_kwargs.items() if v)
+    with _session_locks.get(key):
+        entry = _session_cache.get(key)
+        if entry is not None:
+            session, loaded = entry
+            missing = requested - loaded
+            if missing:
+                inc = {k: (k in missing) for k in load_kwargs}
+                session.load(**inc)
+                loaded = loaded | missing
+            _session_cache.move_to_end(key)
+            _session_cache[key] = (session, loaded)
+        else:
+            session.load(**load_kwargs)
+            _session_cache[key] = (session, requested)
+            while len(_session_cache) > _SESSION_CACHE_MAX:
+                _session_cache.popitem(last=False)
     leaf = _session_cache_dir(session)
     if leaf and os.path.isdir(leaf):
         _touch(leaf)
     _maybe_wake_pruner()
     return session
+
 
 
 def _disk_used_fraction(cache_dir: str) -> float | None:

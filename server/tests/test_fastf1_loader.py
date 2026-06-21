@@ -3,7 +3,18 @@ import threading
 import time
 from collections import namedtuple
 
+import pytest
+
 from app import fastf1_loader
+
+
+@pytest.fixture(autouse=True)
+def _reset_session_cache():
+    """`_session_cache` is module-global; clear it between tests so they don't
+    leak state into each other."""
+    fastf1_loader._session_cache.clear()
+    yield
+    fastf1_loader._session_cache.clear()
 
 
 DiskUsage = namedtuple("DiskUsage", "total used free")
@@ -137,27 +148,39 @@ def test_prune_cache_handles_disk_usage_failure(tmp_path, monkeypatch):
 
 
 class _FakeSession:
-    """A stand-in for fastf1.core.Session. load() blocks on a gate Event and
-    tracks how many loads are running at the same time so tests can assert on
-    serialization vs. parallelism."""
+    """A stand-in for fastf1.core.Session. load() optionally blocks on a gate
+    Event, tracks how many loads run concurrently, and records each call's
+    kwargs so tests can assert on incremental-flag behavior."""
 
-    def __init__(self, tracker: "_ConcurrencyTracker", gate: threading.Event, hold: float = 0.0):
+    def __init__(
+        self,
+        tracker: "_ConcurrencyTracker | None" = None,
+        gate: threading.Event | None = None,
+        hold: float = 0.0,
+    ):
         self._tracker = tracker
         self._gate = gate
         self._hold = hold
         self.api_path = None
+        self.load_calls: list[dict] = []
 
-    def load(self, **_kwargs):
-        with self._tracker.lock:
-            self._tracker.in_flight += 1
-            self._tracker.max_concurrent = max(self._tracker.max_concurrent, self._tracker.in_flight)
+    def load(self, **kwargs):
+        self.load_calls.append(kwargs)
+        if self._tracker is not None:
+            with self._tracker.lock:
+                self._tracker.in_flight += 1
+                self._tracker.max_concurrent = max(
+                    self._tracker.max_concurrent, self._tracker.in_flight
+                )
         try:
-            self._gate.wait(timeout=2.0)
+            if self._gate is not None:
+                self._gate.wait(timeout=2.0)
             if self._hold:
                 time.sleep(self._hold)
         finally:
-            with self._tracker.lock:
-                self._tracker.in_flight -= 1
+            if self._tracker is not None:
+                with self._tracker.lock:
+                    self._tracker.in_flight -= 1
 
 
 class _ConcurrencyTracker:
@@ -167,20 +190,20 @@ class _ConcurrencyTracker:
         self.max_concurrent = 0
 
 
-def test_locked_load_serializes_same_key():
+def test_cached_locked_load_serializes_same_key():
     tracker = _ConcurrencyTracker()
     gate = threading.Event()
     s1 = _FakeSession(tracker, gate, hold=0.02)
     s2 = _FakeSession(tracker, gate, hold=0.02)
 
     def run(sess):
-        fastf1_loader.locked_load(sess, 2025, "r5", "R")
+        fastf1_loader.cached_locked_load(sess, 2025, "r5", "R", laps=True)
 
     t1 = threading.Thread(target=run, args=(s1,))
     t2 = threading.Thread(target=run, args=(s2,))
     t1.start()
     t2.start()
-    time.sleep(0.05)  # give t2 time to either run or block on the lock
+    time.sleep(0.05)
     gate.set()
     t1.join(timeout=2.0)
     t2.join(timeout=2.0)
@@ -189,14 +212,14 @@ def test_locked_load_serializes_same_key():
     assert tracker.max_concurrent == 1
 
 
-def test_locked_load_runs_different_keys_in_parallel():
+def test_cached_locked_load_runs_different_keys_in_parallel():
     tracker = _ConcurrencyTracker()
     gate = threading.Event()
     s1 = _FakeSession(tracker, gate)
     s2 = _FakeSession(tracker, gate)
 
     def run(sess, identifier):
-        fastf1_loader.locked_load(sess, 2025, "r5", identifier)
+        fastf1_loader.cached_locked_load(sess, 2025, "r5", identifier, laps=True)
 
     t1 = threading.Thread(target=run, args=(s1, "R"))
     t2 = threading.Thread(target=run, args=(s2, "Q"))
@@ -211,43 +234,76 @@ def test_locked_load_runs_different_keys_in_parallel():
     assert tracker.max_concurrent == 2
 
 
-def test_locked_load_lock_dict_does_not_grow_unbounded():
-    """After a load completes and no caller is holding the lock, its entry in
-    _locks should be reclaimable — otherwise the dict grows by one per unique
-    session key across the life of the process."""
-    import gc
+def test_cached_locked_load_normalizes_identifier_case():
+    """'r' and 'R' must share both lock and cache entry — otherwise casing
+    bypasses stampede protection and double-loads the same session."""
+    s1 = _FakeSession()
+    s2 = _FakeSession()
 
-    gate = threading.Event()
-    gate.set()  # let load() return immediately
-    tracker = _ConcurrencyTracker()
-    session = _FakeSession(tracker, gate)
+    first = fastf1_loader.cached_locked_load(s1, 2025, "r5", "r", laps=True)
+    second = fastf1_loader.cached_locked_load(s2, 2025, "r5", "R", laps=True)
 
-    before = len(fastf1_loader._locks)
-    fastf1_loader.locked_load(session, 2099, "r999", "R")
-    gc.collect()
-    after = len(fastf1_loader._locks)
-
-    assert after == before, f"_locks grew from {before} to {after}; leak still present"
+    assert first is s1
+    assert second is s1  # cache hit returns the originally-cached instance
+    assert len(s1.load_calls) == 1
+    assert s2.load_calls == []
 
 
-def test_locked_load_normalizes_identifier_case():
-    """Same session at different casings must share a lock — otherwise 'r' and
-    'R' bypass the stampede protection."""
-    tracker = _ConcurrencyTracker()
-    gate = threading.Event()
-    s1 = _FakeSession(tracker, gate, hold=0.02)
-    s2 = _FakeSession(tracker, gate, hold=0.02)
+def test_cached_locked_load_returns_cached_session_on_hit():
+    """A second call with the same key must skip load() entirely and return the
+    cached Session instance — that's the whole point of the cache."""
+    cached = _FakeSession()
+    later = _FakeSession()
 
-    def run(sess, identifier):
-        fastf1_loader.locked_load(sess, 2025, "r5", identifier)
+    fastf1_loader.cached_locked_load(cached, 2025, "r5", "R", laps=True)
+    returned = fastf1_loader.cached_locked_load(later, 2025, "r5", "R", laps=True)
 
-    t1 = threading.Thread(target=run, args=(s1, "r"))
-    t2 = threading.Thread(target=run, args=(s2, "R"))
-    t1.start()
-    t2.start()
-    time.sleep(0.05)
-    gate.set()
-    t1.join(timeout=2.0)
-    t2.join(timeout=2.0)
+    assert returned is cached
+    assert len(cached.load_calls) == 1
+    assert later.load_calls == []
 
-    assert tracker.max_concurrent == 1
+
+def test_cached_locked_load_incremental_load_for_missing_flags():
+    """If the cached Session was loaded with laps only and a later request asks
+    for telemetry, the cached instance must be load()ed for just the missing
+    flag, not rebuilt."""
+    session = _FakeSession()
+
+    fastf1_loader.cached_locked_load(
+        session, 2025, "r5", "R", laps=True, telemetry=False, weather=False
+    )
+    fastf1_loader.cached_locked_load(
+        session, 2025, "r5", "R", laps=True, telemetry=True, weather=False
+    )
+
+    assert len(session.load_calls) == 2
+    # Second call should only ask for the missing flag.
+    assert session.load_calls[1] == {"laps": False, "telemetry": True, "weather": False}
+
+
+def test_cached_locked_load_no_extra_load_when_flags_already_satisfied():
+    session = _FakeSession()
+
+    fastf1_loader.cached_locked_load(
+        session, 2025, "r5", "R", laps=True, telemetry=True
+    )
+    fastf1_loader.cached_locked_load(
+        session, 2025, "r5", "R", laps=True, telemetry=False
+    )
+
+    assert len(session.load_calls) == 1
+
+
+def test_cached_locked_load_evicts_lru_at_cap(monkeypatch):
+    monkeypatch.setattr(fastf1_loader, "_SESSION_CACHE_MAX", 2)
+    a = _FakeSession()
+    b = _FakeSession()
+    c = _FakeSession()
+
+    fastf1_loader.cached_locked_load(a, 2025, "r1", "R", laps=True)
+    fastf1_loader.cached_locked_load(b, 2025, "r2", "R", laps=True)
+    fastf1_loader.cached_locked_load(c, 2025, "r3", "R", laps=True)
+
+    assert (2025, "r1", "R") not in fastf1_loader._session_cache
+    assert (2025, "r2", "R") in fastf1_loader._session_cache
+    assert (2025, "r3", "R") in fastf1_loader._session_cache

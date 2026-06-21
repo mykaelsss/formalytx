@@ -8,6 +8,7 @@ import fastf1
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from fastf1.exceptions import (
     DataNotLoadedError,
     ErgastError,
@@ -95,6 +96,10 @@ app.add_middleware(
 app.include_router(schedule_router, prefix='/schedule')
 app.include_router(session_router, prefix='/sessions')
 
-@app.get("/health")
+class Health(BaseModel):
+    status: str
+
+
+@app.get("/health", response_model=Health)
 def health():
     return {"status": "ok"}
