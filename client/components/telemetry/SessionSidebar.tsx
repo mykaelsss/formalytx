@@ -13,6 +13,7 @@ import {
 import { useCallback, useMemo } from "react";
 import { Driver, SelectedLap, Team } from "@/lib/types";
 import { Skeleton } from "../ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useSchedule } from "@/lib/hooks/useSchedule";
 import { useEventSchedule } from "@/lib/hooks/useEventSchedule";
@@ -215,15 +216,28 @@ export default function SessionSidebar({
                     isDup && e.event_format === "testing"
                       ? ` ${e.identifier.slice(1)}`
                       : "";
-                  return (
+                  const isDisabled = e.status === "upcoming";
+                  const item = (
                     <SelectItem
                       key={e.identifier}
                       className="text-text-primary"
                       value={e.identifier}
+                      disabled={isDisabled}
                     >
                       {e.event_name}
                       {suffix}
                     </SelectItem>
+                  );
+                  if (!isDisabled) return item;
+                  return (
+                    <Tooltip key={e.identifier}>
+                      <TooltipTrigger asChild>
+                        <div>{item}</div>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        Upcoming
+                      </TooltipContent>
+                    </Tooltip>
                   );
                 })}
               </SelectGroup>
@@ -252,15 +266,29 @@ export default function SessionSidebar({
               <SelectGroup>
                 <SelectLabel>Session</SelectLabel>
                 {eventSchedule?.sessions.map((s) => {
-                  return (
+                  const isDisabled = s.status !== "completed";
+                  const item = (
                     <SelectItem
                       key={s.identifier}
                       className="text-text-primary"
                       value={s.identifier}
-                      disabled={s.status !== "completed"}
+                      disabled={isDisabled}
                     >
                       {s.name}
                     </SelectItem>
+                  );
+                  if (!isDisabled) return item;
+                  return (
+                    <Tooltip key={s.identifier}>
+                      <TooltipTrigger asChild>
+                        <div>{item}</div>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        {s.status === "in_progress"
+                          ? "In progress"
+                          : "Upcoming"}
+                      </TooltipContent>
+                    </Tooltip>
                   );
                 })}
               </SelectGroup>

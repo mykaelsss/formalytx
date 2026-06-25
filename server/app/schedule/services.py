@@ -45,7 +45,7 @@ def get_schedule(year: int):
     test_events = 1
 
     for _, event in schedule.iterrows():
-        status = _event_status(event["EventDate"])
+        status = _event_status(event["EventDate"], start_date=event.get("Session1DateUtc"))
         round_num = int(event["RoundNumber"])
         event_format = event["EventFormat"]
         identifier = ''
@@ -337,11 +337,11 @@ def _get_event_sessions(event):
         if pd.isna(date):
             continue
         identifier = SESSION_NAME_TO_IDENTIFIER.get(name, name)
-        status = _event_status(date)
         start_time = str(date.time())[:5]
         duration = SESSION_DURATION_MINUTES.get(identifier, 60)
         end_dt = date + timedelta(minutes=duration)
         end_time = str(end_dt.time())[:5] if end_dt else None
+        status = _event_status(end_dt, start_date=date)
 
         sessions.append({
             "name": name,
@@ -363,15 +363,15 @@ def _get_event_sessions_detailed(event, year: int, event_id: str, config: Sessio
         if pd.isna(date):
             continue
         identifier = SESSION_NAME_TO_IDENTIFIER.get(name, name)
-        status = _event_status(date)
-        weather = None
-        fastest_lap = None
-        if status == "completed" and (config.weather or config.laps):
-            weather, fastest_lap = _get_session_data(year, event_id, identifier, config)
         start_time = str(date.time())[:5]
         duration = SESSION_DURATION_MINUTES.get(identifier, 60)
         end_dt = date + timedelta(minutes=duration)
         end_time = str(end_dt.time())[:5] if end_dt else None
+        status = _event_status(end_dt, start_date=date)
+        weather = None
+        fastest_lap = None
+        if status == "completed" and (config.weather or config.laps):
+            weather, fastest_lap = _get_session_data(year, event_id, identifier, config)
 
         sessions.append({
             "name": name,
@@ -416,14 +416,22 @@ def _get_session_data(year: int, event_id: str, identifier: str, config: Session
         logger.exception("Error in _get_session_data")
         return None, None
 
-def _event_status(date):
+def _event_status(date, start_date=None):
     if date is None:
         return "unknown"
     now = datetime.now(timezone.utc)
     event_date = date if isinstance(date, datetime) else datetime.combine(date, datetime.min.time(), tzinfo=timezone.utc)
     if event_date.tzinfo is None:
         event_date = event_date.replace(tzinfo=timezone.utc)
-    return "upcoming" if event_date > now else "completed"
+    if event_date <= now:
+        return "completed"
+    if start_date is not None:
+        start = start_date if isinstance(start_date, datetime) else datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if start <= now:
+            return "in_progress"
+    return "upcoming"
 
 def round_val(val):
     try:
