@@ -1,4 +1,3 @@
-import type { ReadonlyURLSearchParams } from "next/navigation";
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -9,6 +8,7 @@ import {
 import { seriesKey } from "./seriesKey";
 import { fetchSession } from "./api";
 import type { SelectedLap } from "./types";
+import { Options } from "nuqs";
 
 export function parseSelectedLaps(laps: string): SelectedLap[] {
   const selected: SelectedLap[] = [];
@@ -30,7 +30,9 @@ export function parseSelectedLaps(laps: string): SelectedLap[] {
   return selected;
 }
 
-export function serializeSelectedLaps(selected: SelectedLap[]): string {
+export function serializeSelectedLaps(selected: SelectedLap[]): string | null {
+  if (!selected.length) return null;
+
   const groups = new Map<string, number[]>();
   for (const l of selected) {
     const gk = `${l.year}:${l.event}:${l.session}:${l.driver}`;
@@ -106,26 +108,21 @@ export async function ensureSameCircuit(
 }
 
 type NavCtx = {
-  router: { push: (url: string, options?: { scroll?: boolean }) => void };
-  pathname: string;
-  searchParams: ReadonlyURLSearchParams;
   queryClient: QueryClient;
+  setLaps: (value: string | ((old: string) => string | null) | null, options?: Options | undefined) => Promise<URLSearchParams>
+  setTab: (value: string | ((old: string) => string | null) | null, options?: Options | undefined) => Promise<URLSearchParams>
 };
 
 function addLap(
   selected: SelectedLap[],
   lap: SelectedLap,
-  { router, pathname, searchParams }: NavCtx,
+  { setLaps, setTab }: NavCtx,
 ) {
   const key = seriesKey(lap);
-  const params = new URLSearchParams(searchParams.toString());
-  params.set("laps", serializeSelectedLaps([...selected, lap]));
-  router.push(pathname + "?" + params.toString(), { scroll: false });
+  setLaps(serializeSelectedLaps([...selected, lap]));
 
   markLapAwaitingReview(key);
-  params.set("tab", "telemetry");
-  const viewUrl = pathname + "?" + params.toString();
-  lapAddedToast(lap.driver, lap.lap, () => router.push(viewUrl));
+  lapAddedToast(lap.driver, lap.lap, () => setTab('telemetry'));
 }
 
 export async function toggleLap(
@@ -138,11 +135,7 @@ export async function toggleLap(
 
   if (exists) {
     const updated = selected.filter((l) => seriesKey(l) !== key);
-    const lapsStr = serializeSelectedLaps(updated);
-    const params = new URLSearchParams(ctx.searchParams.toString());
-    if (lapsStr) params.set("laps", lapsStr);
-    else params.delete("laps");
-    ctx.router.push(ctx.pathname + "?" + params.toString());
+    ctx.setLaps(serializeSelectedLaps(updated))
     consumeLapAwaitingReview(key);
     return;
   }

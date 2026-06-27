@@ -1,7 +1,6 @@
 import { Compound, Lap, Team } from "@/lib/types";
 import TyreBadge from "./TyreBadge";
 import { Skeleton } from "../ui/skeleton";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -10,6 +9,8 @@ import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
 import { toggleLap, parseSelectedLaps, isLapSelected } from "@/lib/selectedLaps";
 import { lapTimeToMs } from "@/lib/format";
 import { useEventSchedule } from "@/lib/hooks/useEventSchedule";
+import { useQueryState } from "nuqs";
+import { DEFAULT_NUQS_OPTIONS } from "@/lib/constants";
 
 function formatDelta(ms: number): string {
   return `+${(ms / 1000).toFixed(3)}`;
@@ -20,15 +21,13 @@ interface LapTableProps {
 }
 
 export default function LapTable({ teams }: LapTableProps) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const year = searchParams.get("year") ?? "";
-  const event = searchParams.get("event") ?? "";
-  const session = searchParams.get("session") ?? "";
-  const drivers = searchParams.get("drivers") ?? "";
-  const laps = searchParams.get("laps") ?? "";
+  const [year] = useQueryState('year', DEFAULT_NUQS_OPTIONS);
+  const [event] = useQueryState('event', DEFAULT_NUQS_OPTIONS);
+  const [session] = useQueryState('session', DEFAULT_NUQS_OPTIONS);
+  const [drivers] = useQueryState('drivers', DEFAULT_NUQS_OPTIONS);
+  const [laps, setLaps] = useQueryState('laps', DEFAULT_NUQS_OPTIONS);
+  const [, setTab] = useQueryState('tab', DEFAULT_NUQS_OPTIONS)
 
   const selectedDrivers = useMemo(
     () => (drivers ? drivers.split(",") : []),
@@ -210,9 +209,8 @@ export default function LapTable({ teams }: LapTableProps) {
                               lap: lapNumber,
                             },
                             {
-                              router,
-                              pathname: pathname,
-                              searchParams,
+                              setLaps,
+                              setTab,
                               queryClient,
                             },
                           )

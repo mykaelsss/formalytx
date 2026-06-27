@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -10,19 +9,17 @@ import LapTable from "./LapTable";
 import SessionSidebar from "./SessionSidebar";
 import { m } from "motion/react";
 import { Team } from "@/lib/types";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import LapChart from "./LapChart";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/hooks/useSession";
+import { useQueryState } from "nuqs";
+import { DEFAULT_NUQS_OPTIONS } from "@/lib/constants";
 
 export default function SessionViewer() {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const year = searchParams.get("year") ?? "";
-  const event = searchParams.get("event") ?? "";
-  const session = searchParams.get("session") ?? "";
-  const drivers = searchParams.get("drivers") ?? "";
+  const [year] = useQueryState('year', DEFAULT_NUQS_OPTIONS);
+  const [event] = useQueryState('event', DEFAULT_NUQS_OPTIONS);
+  const [session] = useQueryState('session', DEFAULT_NUQS_OPTIONS);
+  const [drivers, setDrivers] = useQueryState('drivers', DEFAULT_NUQS_OPTIONS);
 
   const selectedDrivers = useMemo(
     () => (drivers ? drivers.split(",") : []),
@@ -45,16 +42,6 @@ export default function SessionViewer() {
     return Array.from(teamMap.values())
   }, [sessionData])
 
-  const createQueryString = useCallback(
-    (name: string, value: string) => {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set(name, value);
-
-      return params.toString();
-    },
-    [searchParams],
-  );
-
   useEffect(() => {
     if (teams.length === 0) return;
     const validAbbrevs = new Set(
@@ -65,11 +52,9 @@ export default function SessionViewer() {
     );
     const validDrivers = selectedDrivers.filter((a) => validAbbrevs.has(a));
     if (validDrivers.length !== selectedDrivers.length) {
-      router.replace(
-        pathname + "?" + createQueryString("drivers", validDrivers.join(",")),
-      );
+      setDrivers(validDrivers.join(","))
     }
-  }, [teams, router, pathname, createQueryString, selectedDrivers]);
+  }, [selectedDrivers, setDrivers]);
 
   return (
     <div className={cn(

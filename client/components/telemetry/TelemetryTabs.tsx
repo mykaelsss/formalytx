@@ -1,10 +1,9 @@
 "use client";
 
-import { useCallback, useMemo,  useState } from "react";
+import { useMemo, useState } from "react";
 import { m } from "motion/react";
 import SessionViewer from "./SessionViewer";
 import TelemetryViewer from "./TelemetryViewer";
-import { useRouter, useSearchParams } from "next/navigation";
 import { parseSelectedLaps } from "@/lib/selectedLaps";
 import { useLapTelemetry } from "@/lib/hooks/useLapTelemetry";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
@@ -12,11 +11,9 @@ import { Button } from "../ui/button";
 import { Share } from "lucide-react";
 import { toast } from "sonner";
 import { useSession } from "@/lib/hooks/useSession";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { useQueryState } from "nuqs";
+import { DEFAULT_NUQS_OPTIONS } from "@/lib/constants";
 
 interface TelemetryTabsProps {
   activeTab: string;
@@ -27,17 +24,20 @@ const tabs = [
   { value: "telemetry", label: "Telemetry" },
 ];
 
-export default function TelemetryTabs({ activeTab: initialTab }: TelemetryTabsProps) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const year = searchParams.get("year") ?? "";
-  const event = searchParams.get("event") ?? "";
-  const session = searchParams.get("session") ?? "";
-  const laps = searchParams.get("laps") ?? "";
-  const activeTab = searchParams.get("tab") ?? initialTab;
+export default function TelemetryTabs({
+  activeTab: initialTab,
+}: TelemetryTabsProps) {
+  const [year] = useQueryState("year", DEFAULT_NUQS_OPTIONS);
+  const [event] = useQueryState("event", DEFAULT_NUQS_OPTIONS);
+  const [session] = useQueryState("session", DEFAULT_NUQS_OPTIONS);
+  const [laps] = useQueryState("laps", DEFAULT_NUQS_OPTIONS);
+  const [tab, setTab] = useQueryState("tab", {
+    ...DEFAULT_NUQS_OPTIONS,
+    defaultValue: initialTab,
+  });
 
-  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(
-    new Set([activeTab]),
+const [visitedTabs, setVisitedTabs] = useState<Set<string>>(
+    new Set([tab]),
   );
 
   const [initialLaps] = useState(laps);
@@ -47,8 +47,8 @@ export default function TelemetryTabs({ activeTab: initialTab }: TelemetryTabsPr
   const selectedLaps = useMemo(() => parseSelectedLaps(laps), [laps]);
   useLapTelemetry(selectedLaps, hasInteracted || visitedTabs.has("telemetry"));
 
-  if (!visitedTabs.has(activeTab)) {
-    setVisitedTabs((prev) => new Set(prev).add(activeTab));
+  if (!visitedTabs.has(tab)) {
+    setVisitedTabs((prev) => new Set(prev).add(tab));
   }
   const [isSharing, setIsSharing] = useState(false);
 
@@ -86,25 +86,14 @@ export default function TelemetryTabs({ activeTab: initialTab }: TelemetryTabsPr
       }
     }
   };
-
   const handleTabChange = (val: string) => {
     setVisitedTabs((prev) => new Set(prev).add(val));
-    router.replace(window.location.pathname + "?" + createQueryString("tab", val));
+    setTab(val)
   };
-
-  const createQueryString = useCallback(
-    (name: string, value: string) => {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set(name, value);
-
-      return params.toString();
-    },
-    [searchParams],
-  );
 
   return (
     <Tabs
-      value={activeTab}
+      value={tab}
       onValueChange={handleTabChange}
       className="px-3 sm:px-5 mx-auto max-w-400 py-6 gap-0"
     >
@@ -125,17 +114,17 @@ export default function TelemetryTabs({ activeTab: initialTab }: TelemetryTabsPr
 
       <div className="flex items-center justify-between gap-3 border-b border-surface-border">
         <TabsList className="bg-transparent p-0 h-auto! gap-0 rounded-none">
-          {tabs.map((tab, i) => (
+          {tabs.map((t, i) => (
             <TabsTrigger
-              key={tab.value}
-              value={tab.value}
+              key={t.value}
+              value={t.value}
               className="relative flex-none rounded-none border-0 px-3 sm:px-6 py-4 font-mono text-[11px] font-semibold tracking-[0.2em] uppercase text-text-muted bg-transparent! data-active:text-accent-green transition-colors cursor-pointer hover:text-text-primary"
             >
               <span className="text-[9px] text-text-disabled tabular-nums">
                 0{i + 1}
               </span>
-              {tab.label}
-              {activeTab === tab.value && (
+              {t.label}
+              {tab === t.value && (
                 <m.span
                   layoutId="tab-underline"
                   className="absolute inset-x-0 -bottom-px h-0.5 bg-accent-green"
@@ -158,7 +147,9 @@ export default function TelemetryTabs({ activeTab: initialTab }: TelemetryTabsPr
             </span>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-sm">
-            {sessionData ? "Share a link to this session view" : "Select a session to share"}
+            {sessionData
+              ? "Share a link to this session view"
+              : "Select a session to share"}
           </TooltipContent>
         </Tooltip>
       </div>
@@ -166,7 +157,7 @@ export default function TelemetryTabs({ activeTab: initialTab }: TelemetryTabsPr
         <TabsContent
           value="session"
           forceMount
-          hidden={activeTab !== "session"}
+          hidden={tab !== "session"}
           className="pt-6"
         >
           <SessionViewer />
@@ -176,7 +167,7 @@ export default function TelemetryTabs({ activeTab: initialTab }: TelemetryTabsPr
         <TabsContent
           value="telemetry"
           forceMount
-          hidden={activeTab !== "telemetry"}
+          hidden={tab !== "telemetry"}
           className="pt-6"
         >
           <TelemetryViewer />
