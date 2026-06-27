@@ -1,6 +1,5 @@
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Select,
   SelectContent,
@@ -26,6 +25,8 @@ import {
   serializeSelectedLaps,
 } from "@/lib/selectedLaps";
 import { useQueryClient } from "@tanstack/react-query";
+import { useQueryState } from "nuqs";
+import { DEFAULT_NUQS_OPTIONS } from "@/lib/constants";
 
 const YEARS = Array.from({ length: new Date().getFullYear() - 2017 }, (_, i) =>
   String(new Date().getFullYear() - i),
@@ -40,14 +41,13 @@ export default function SessionSidebar({
   loadingSession,
   teams,
 }: SessionSidebarProps) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const year = searchParams.get("year") ?? "";
-  const event = searchParams.get("event") ?? "";
-  const session = searchParams.get("session") ?? "";
-  const drivers = searchParams.get("drivers") ?? "";
+  const [year, setYear] = useQueryState("year", DEFAULT_NUQS_OPTIONS);
+  const [event, setEvent] = useQueryState("event", DEFAULT_NUQS_OPTIONS);
+  const [session, setSession] = useQueryState("session", DEFAULT_NUQS_OPTIONS);
+  const [drivers, setDrivers] = useQueryState("drivers", DEFAULT_NUQS_OPTIONS);
+  const [laps, setLaps] = useQueryState("laps", DEFAULT_NUQS_OPTIONS);
+  const [, setTab] = useQueryState("tab", DEFAULT_NUQS_OPTIONS);
 
   const selectedDrivers = useMemo(
     () => (drivers ? drivers.split(",") : []),
@@ -64,16 +64,6 @@ export default function SessionSidebar({
   )?.status;
   const staleTime = sessionStatus === "completed" ? Infinity : 60_000;
 
-  const createQueryString = useCallback(
-    (name: string, value: string) => {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set(name, value);
-
-      return params.toString();
-    },
-    [searchParams],
-  );
-
   const toggleDriver = useCallback(
     (code: string) => {
       const next = new Set(selectedDrivers);
@@ -82,21 +72,10 @@ export default function SessionSidebar({
       } else {
         next.add(code);
       }
-      router.replace(
-        pathname +
-          "?" +
-          createQueryString("drivers", Array.from(next).join(",")),
-        { scroll: false },
-      );
+      setDrivers(Array.from(next).join(","));
     },
-    [selectedDrivers, pathname, createQueryString, router],
+    [selectedDrivers, setDrivers],
   );
-
-  const clearDrivers = () => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("drivers");
-    router.replace(pathname + "?" + params.toString(), { scroll: false });
-  };
 
   const {
     driverLaps,
@@ -106,7 +85,7 @@ export default function SessionSidebar({
 
   const compareFastestLaps = async () => {
     const byCode = new Map(driverLaps.map((d) => [d.abbreviation, d]));
-    const existing = parseSelectedLaps(searchParams.get("laps") ?? "");
+    const existing = parseSelectedLaps(laps);
 
     const proceed = (base: SelectedLap[]) => {
       const merged = [...base];
@@ -127,10 +106,8 @@ export default function SessionSidebar({
         if (!isLapSelected(merged, entry)) merged.push(entry);
       }
       if (!merged.length) return;
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("laps", serializeSelectedLaps(merged));
-      params.set("tab", "telemetry");
-      router.push(pathname + "?" + params.toString());
+      setLaps(serializeSelectedLaps(merged));
+      setTab("telemetry");
     };
 
     if (
@@ -161,12 +138,7 @@ export default function SessionSidebar({
           <span className="font-mono text-[9px] font-semibold tracking-[0.25em] uppercase text-data-blue">
             01 · Year
           </span>
-          <Select
-            value={year}
-            onValueChange={(val) =>
-              router.push(pathname + "?" + createQueryString("year", val))
-            }
-          >
+          <Select value={year} onValueChange={(val) => setYear(val)}>
             <SelectTrigger className="w-full rounded-none font-mono text-xs text-text-primary border-surface-border bg-surface-card">
               <SelectValue placeholder="Select year" />
             </SelectTrigger>
@@ -195,9 +167,7 @@ export default function SessionSidebar({
           <Select
             value={event}
             disabled={isLoadingSchedule}
-            onValueChange={(val) =>
-              router.push(pathname + "?" + createQueryString("event", val))
-            }
+            onValueChange={(val) => setEvent(val)}
           >
             <SelectTrigger className="w-full rounded-none font-mono text-xs text-text-primary border-surface-border bg-surface-card">
               <SelectValue placeholder="Select event" />
@@ -210,8 +180,7 @@ export default function SessionSidebar({
               <SelectGroup>
                 <SelectLabel>Schedule</SelectLabel>
                 {schedule?.events?.map((e) => {
-                  const isDup =
-                    (eventNameCounts.get(e.event_name) ?? 0) > 1;
+                  const isDup = (eventNameCounts.get(e.event_name) ?? 0) > 1;
                   const suffix =
                     isDup && e.event_format === "testing"
                       ? ` ${e.identifier.slice(1)}`
@@ -234,9 +203,7 @@ export default function SessionSidebar({
                       <TooltipTrigger asChild>
                         <div>{item}</div>
                       </TooltipTrigger>
-                      <TooltipContent side="right">
-                        Upcoming
-                      </TooltipContent>
+                      <TooltipContent side="right">Upcoming</TooltipContent>
                     </Tooltip>
                   );
                 })}
@@ -251,9 +218,7 @@ export default function SessionSidebar({
           <Select
             value={session}
             disabled={isLoadingRound}
-            onValueChange={(val) =>
-              router.push(pathname + "?" + createQueryString("session", val))
-            }
+            onValueChange={(val) => setSession(val)}
           >
             <SelectTrigger className="w-full rounded-none font-mono text-xs text-text-primary border-surface-border bg-surface-card">
               <SelectValue placeholder="Select session" />
@@ -377,7 +342,7 @@ export default function SessionSidebar({
         <button
           type="button"
           className="cursor-pointer w-full py-2.5 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] border border-surface-border bg-surface-card hover:bg-surface-card-hover text-text-secondary hover:text-text-primary transition-colors"
-          onClick={clearDrivers}
+          onClick={() => setDrivers(null)}
         >
           Clear drivers
         </button>

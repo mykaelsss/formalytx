@@ -1,7 +1,6 @@
 "use client";
 
 import { useLapTelemetry } from "@/lib/hooks/useLapTelemetry";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useEffect, useRef, useState, useCallback } from "react";
 import { useTelemetrySettings } from "@/lib/hooks/useTelemetrySettings";
 import { useCircuitInfo } from "@/lib/hooks/useCircuitInfo";
@@ -27,11 +26,12 @@ import { allocateColorSlots, lapColor } from "@/lib/colors";
 import { useTelemetrySeries } from "@/lib/hooks/useTelemetrySeries";
 import TelemetrySettingsPanel from "./TelemetrySettingsPanel";
 import ColorSwatch from "../ui/ColorSwatch";
-import { CHANNELS, GRID_GAP, GRID_HEIGHT } from "@/lib/constants";
+import { CHANNELS, DEFAULT_NUQS_OPTIONS, GRID_GAP, GRID_HEIGHT } from "@/lib/constants";
 import { CHART_STRUCTURE } from "@/lib/chartStructure";
 import { buildTooltipFormatter } from "@/lib/buildTooltipFormatter";
 import { useToggleSeries } from "@/lib/hooks/useToggleSeries";
 import { useAsRef } from "@/hooks/use-as-ref";
+import { useQueryState } from "nuqs";
 
 function resolveChannelSettings(ts: TelemetrySettings, chIdx: number) {
   const channel = CHANNELS[chIdx];
@@ -42,13 +42,11 @@ function resolveChannelSettings(ts: TelemetrySettings, chIdx: number) {
 
 export default function TelemetryViewer() {
   const telemetrySettings = useTelemetrySettings();
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const year = searchParams.get("year") ?? "";
-  const event = searchParams.get("event") ?? "";
-  const laps = searchParams.get("laps") ?? "";
+  const [year] = useQueryState('year', DEFAULT_NUQS_OPTIONS);
+  const [event] = useQueryState('event', DEFAULT_NUQS_OPTIONS);
+  const [laps, setLaps] = useQueryState('laps', DEFAULT_NUQS_OPTIONS);
+  const [, setTab] = useQueryState('tab', DEFAULT_NUQS_OPTIONS)
 
   const chartRef = useEcharts();
   const hoveredSeriesRef = useRef<string | null>(null);
@@ -67,20 +65,13 @@ export default function TelemetryViewer() {
   const removeLap = useCallback(
     (lap: SelectedLap) => {
       toggleLap(selectedLaps, lap, {
-        router,
-        pathname,
-        searchParams,
         queryClient,
+        setLaps,
+        setTab
       });
     },
-    [selectedLaps, router, pathname, searchParams, queryClient],
+    [selectedLaps, setTab, setLaps, queryClient],
   );
-
-  const clearLaps = useCallback(() => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("laps");
-    router.replace(pathname + "?" + params.toString(), { scroll: false });
-  }, [router, pathname, searchParams]);
 
   const [prevLaps, setPrevLaps] = useState(laps);
   if (laps !== prevLaps) {
@@ -201,13 +192,10 @@ export default function TelemetryViewer() {
   useEffect(() => {
     for (const item of legendItems) {
       if (consumeLapAwaitingReview(item.key)) {
-        const viewParams = new URLSearchParams(searchParams.toString());
-        viewParams.set("tab", "telemetry");
-        const viewUrl = pathname + "?" + viewParams.toString();
-        lapReadyToast(item.driver, item.lap, () => router.push(viewUrl));
+        lapReadyToast(item.driver, item.lap, () => setTab("telemetry"));
       }
     }
-  }, [legendItems, searchParams, pathname, router]);
+  }, [legendItems, setTab]);
 
   useEffect(() => {
     if (!chartRef.current) return;
@@ -462,12 +450,6 @@ export default function TelemetryViewer() {
           ", ",
         )} plotted against lap distance.`;
 
-  const goToSession = () => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("tab", "session");
-    router.replace(pathname + "?" + params.toString(), { scroll: false });
-  };
-
   return (
     <div className="w-full flex flex-col border border-surface-border bg-surface-card">
       <div className="flex sm:flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2 border-b border-surface-border">
@@ -487,7 +469,7 @@ export default function TelemetryViewer() {
               size="sm"
               variant="ghost"
               className="font-mono text-[10px] tracking-[0.15em] uppercase cursor-pointer text-accent-green rounded-none hover:bg-surface-card-hover hover:text-accent-green"
-              onClick={clearLaps}
+              onClick={() => setLaps(null)}
             >
               <X className="size-3.5 self-center" aria-hidden="true" />
               <span className="h-3.5">Clear Laps</span>
@@ -672,7 +654,7 @@ export default function TelemetryViewer() {
               </p>
               <button
                 type="button"
-                onClick={goToSession}
+                onClick={() => setTab('session')}
                 className="mt-1 cursor-pointer font-mono text-[10px] font-semibold tracking-[0.2em] uppercase px-5 py-2.5 bg-accent-green text-black hover:bg-accent-green-hover transition-colors [clip-path:polygon(0_0,100%_0,100%_calc(100%-10px),calc(100%-10px)_100%,0_100%)]"
               >
                 ← Pick laps in session
