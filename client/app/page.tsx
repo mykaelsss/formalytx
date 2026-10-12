@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Marquee from "react-fast-marquee";
+import AdSlot from "@/components/AdSlot";
+import { AD_SLOTS } from "@/lib/ads";
 
 export const metadata: Metadata = {
   title: "Formalytx · F1 Telemetry Explorer",
@@ -383,6 +385,13 @@ export default function Home() {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ── Advertisement ── */}
+      <section className="w-full border-b border-surface-border">
+        <div className="mx-auto max-w-6xl px-5 py-12">
+          <AdSlot slot={AD_SLOTS.landing} />
         </div>
       </section>
 

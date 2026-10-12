@@ -14,6 +14,8 @@ import { useSession } from "@/lib/hooks/useSession";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useQueryState } from "nuqs";
 import { DEFAULT_NUQS_OPTIONS } from "@/lib/constants";
+import { AD_SLOTS } from "@/lib/ads";
+import AdSlot from "../AdSlot";
 
 interface TelemetryTabsProps {
   activeTab: string;
@@ -172,6 +174,12 @@ const [visitedTabs, setVisitedTabs] = useState<Set<string>>(
         >
           <TelemetryViewer />
         </TabsContent>
+      )}
+      {sessionData && (
+        <AdSlot
+          slot={AD_SLOTS.telemetry}
+          className="mt-12 pt-6 border-t border-surface-border"
+        />
       )}
     </Tabs>
   );
