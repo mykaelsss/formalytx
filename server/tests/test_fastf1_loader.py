@@ -314,6 +314,35 @@ def test_cached_locked_load_evicts_lru_at_cap(monkeypatch):
     assert (2025, "r3", "R") in fastf1_loader._session_cache
 
 
+def test_evict_idle_sessions_drops_only_idle_ones(monkeypatch):
+    monkeypatch.setattr(fastf1_loader, "_SESSION_IDLE_SECONDS", 60)
+    now = [1000.0]
+    monkeypatch.setattr(fastf1_loader.time, "monotonic", lambda: now[0])
+    fastf1_loader.cached_locked_load(_FakeSession(), 2025, "r1", "R", laps=True)
+    now[0] += 30
+    fastf1_loader.cached_locked_load(_FakeSession(), 2025, "r2", "R", laps=True)
+
+    now[0] += 30
+    fastf1_loader.evict_idle_sessions()
+
+    assert list(fastf1_loader._session_cache) == [(2025, "r2", "R")]
+
+
+def test_reuse_keeps_a_session_from_going_idle(monkeypatch):
+    monkeypatch.setattr(fastf1_loader, "_SESSION_IDLE_SECONDS", 60)
+    now = [1000.0]
+    monkeypatch.setattr(fastf1_loader.time, "monotonic", lambda: now[0])
+    session = _FakeSession()
+    fastf1_loader.cached_locked_load(session, 2025, "r1", "R", laps=True)
+    now[0] += 59
+    fastf1_loader.cached_locked_load(_FakeSession(), 2025, "r1", "R", laps=True)
+
+    now[0] += 59
+    fastf1_loader.evict_idle_sessions()
+
+    assert fastf1_loader.cached_locked_load(_FakeSession(), 2025, "r1", "R", laps=True) is session
+
+
 @pytest.fixture
 def unresponsive_url():
     """An HTTP endpoint that completes the TCP handshake (via the listen

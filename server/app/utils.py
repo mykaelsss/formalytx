@@ -87,7 +87,13 @@ def resolve_session(year: int, event_id: str, identifier: str):
 def format_lap_time(td) -> str | None:
     if td is None or pd.isna(td):
         return None
-    secs = pd.Timedelta(td).total_seconds()
+    return format_seconds(pd.Timedelta(td).total_seconds())
+
+
+def format_seconds(secs: float | None) -> str | None:
+    """A lap time in seconds as m:ss.fff."""
+    if secs is None:
+        return None
     m = int(secs // 60)
     s = secs % 60
     return f"{m}:{s:06.3f}"

@@ -22,8 +22,11 @@ from fastf1.exceptions import (
 )
 
 from . import config
+from app.archive import reader
+from app.archive.archive import open_archive
+from app.archive.reader import ArchiveReader, ArchiveUnavailable
 from app.etag import ETagMiddleware
-from app.fastf1_loader import install_request_timeouts, set_cache_dir, start_pruner
+from app.fastf1_loader import configure_session_cache, install_request_timeouts, set_cache_dir, start_pruner
 from app.sessions.routes import router as session_router
 from app.schedule.routes import router as schedule_router
 from app.utils import LockWaitTimeout
@@ -51,6 +54,13 @@ async def lifespan(app: FastAPI):
         settings.upstream_read_timeout_seconds,
     )
     set_cache_dir(settings.fastf1_cache_dir)
+    configure_session_cache(settings.session_cache_size, settings.session_cache_idle_seconds)
+    archive = open_archive(settings)
+    reader.configure(ArchiveReader(archive) if archive is not None else None)
+    if archive is None:
+        logger.warning("No session archive configured; every session is loaded through FastF1")
+    else:
+        logger.info("Serving archived sessions from %s", settings.r2_bucket or settings.archive_local_dir)
     # `kill -USR1 <pid>` dumps every thread's stack to stderr (the deploy logs)
     # so a stuck request can be diagnosed in production without a restart.
     if hasattr(signal, "SIGUSR1"):
@@ -65,6 +75,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         stop_pruner.set()
+        reader.configure(None)
 
 app = FastAPI(lifespan=lifespan)
 
@@ -111,6 +122,15 @@ async def _lock_wait_timeout(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def _archive_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    logger.error("Archive unavailable for %s: %s", request.url.path, exc)
+    return _error(
+        503,
+        "Session data is temporarily unavailable. Please try again shortly.",
+        headers={"Retry-After": "30"},
+    )
+
+
 for _exc in (ValueError, InvalidSessionError, NoLapDataError, SessionNotAvailableError, DataNotLoadedError):
     app.add_exception_handler(_exc, _not_found)
 app.add_exception_handler(RateLimitExceededError, _rate_limited)
@@ -118,6 +138,7 @@ app.add_exception_handler(FastF1CriticalError, _upstream_error)
 app.add_exception_handler(ErgastError, _upstream_error)
 app.add_exception_handler(requests.RequestException, _upstream_request_failed)
 app.add_exception_handler(LockWaitTimeout, _lock_wait_timeout)
+app.add_exception_handler(ArchiveUnavailable, _archive_unavailable)
 
 app.add_middleware(ETagMiddleware)
 

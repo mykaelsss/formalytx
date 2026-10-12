@@ -36,7 +36,8 @@ f1_telemetry/
     │   ├── main.py            # App entry, middleware, error handlers
     │   ├── config.py          # Settings (env vars via pydantic-settings)
     │   ├── caching.py         # HTTP Cache-Control header policy
-    │   ├── fastf1_loader.py   # In-process Session cache + per-key load locks
+    │   ├── fastf1_loader.py   # FastF1 fallback: small Session cache + per-key load locks
+    │   ├── archive/           # Session archive on R2: models, export command, reader
     │   ├── sessions/          # Session info, driver laps, telemetry
     │   │   ├── routes.py
     │   │   ├── services.py
@@ -90,10 +91,15 @@ Why: FastF1 assigns `RoundNumber = 0` to every testing event in a season, so rou
 
 ## Data Flow
 
-- F1 data is sourced entirely from FastF1 — no live API, no separate database
-- Request → route → service → `resolve_session(year, event_id, identifier)` (in `app/utils.py`) → FastF1
-- FastF1 sessions are loaded via `cached_locked_load` in `app/fastf1_loader.py`. A per-key lock (via `KeyLockRegistry` in `app/utils.py`) serializes concurrent loads of the same session, and the loaded `Session` is pinned in process memory (LRU 8) so repeat requests skip `session.load()` entirely
-- FastF1's on-disk cache lives in `server/cache/` (mounted as a volume in Docker Compose)
+- F1 data is sourced from FastF1, and finished sessions are exported once into the session archive (see [Session archive](#session-archive)).
+- Request → route → service → the archive, through `app/archive/reader.py`.
+  Each request reads only the objects it needs: the session summary, then one object per driver for laps or one per lap for telemetry, fetched in parallel.
+- Sessions that aren't archived yet (live, just finished, or missing from the archive) fall back to FastF1 through `resolve_session` (in `app/utils.py`).
+- FastF1 sessions are loaded via `cached_locked_load` in `app/fastf1_loader.py`.
+  A per-key lock (via `KeyLockRegistry` in `app/utils.py`) serializes concurrent loads of the same session.
+  The loaded `Session` is kept in process memory, but only a few of them and only while they're used, since each holds a few hundred MB.
+- If the archive can't be read, requests fail with a 503 and a `Retry-After` header rather than falling back to FastF1, which would load every session into memory at once.
+- FastF1's on-disk cache lives in `server/cache/` (mounted as a volume in Docker Compose).
 
 ---
 
@@ -113,18 +119,18 @@ Note: avoid `Cache-Control: immutable` on data endpoints. It pins responses in b
 
 ### In-process caches
 
-Sitting in front of the per-request work, each keyed by the parameters that determine the response. All bounded LRU, all guarded by a `KeyLockRegistry` (in `app/utils.py`) so concurrent requests for the same key serialize on the build instead of stampeding.
+Responses are cached by Cloudflare, so the server keeps only small caches.
+They're process-local: with several uvicorn workers, each has its own.
 
 | Cache | Module | Key | Cap |
 |---|---|---|---|
-| Loaded `Session` objects | `app/fastf1_loader.py` | `(year, event_id, identifier)` | 8 |
-| Driver-laps response | `app/sessions/services.py` | `(year, event_id, identifier, drivers)` | 256 |
-| Per-lap telemetry dict | `app/sessions/services.py` | `(year, event_id, identifier, driver, lap_number)` | 1024 |
-| Circuit response | `app/schedule/services.py` | `(year, event_id)` | 64 |
+| Archived session summaries | `app/archive/reader.py` | `(year, event_id, identifier)` | 256 |
+| Archived circuits | `app/archive/reader.py` | `(year, event_id)` | 128 |
+| Loaded FastF1 `Session` objects | `app/fastf1_loader.py` | `(year, event_id, identifier)` | `SESSION_CACHE_SIZE` (2) |
 
-The Session cache skips re-deserializing pandas DataFrames from FastF1's pickle cache. The per-lap telemetry cache skips the `get_car_data().add_distance()` + `.tolist()` work that dominates a cold telemetry response. The laps and circuit caches memoize the full response shape — cheap reads on repeat queries.
-
-These caches are process-local. If you ever run multiple uvicorn workers, each worker has its own; hit rate divides accordingly.
+Every archive request needs its session summary, so those are cached; summaries whose results aren't final yet are re-read after 10 minutes.
+Laps and telemetry are read from the archive on each request.
+Loaded FastF1 sessions are dropped after `SESSION_CACHE_IDLE_SECONDS` (30 minutes) without use.
 
 ---
 
@@ -149,10 +155,12 @@ The `compose.override.yaml` is picked up automatically in development — it ena
 
 ```bash
 cd server
-docker compose up --build --watch
+infisical run -- docker compose up --build --watch
 ```
 
 The API will be available at `http://localhost:80` (via nginx) or `http://localhost:8000` (direct).
+Running through `infisical run` passes the R2 credentials into the container, so archived sessions are served from the dev bucket.
+Without them, every session is loaded through FastF1.
 
 ### Session archive
 

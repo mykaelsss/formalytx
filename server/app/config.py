@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     r2_bucket: str = ''
     archive_local_dir: str = ''
 
+    # Sessions loaded through FastF1, for sessions not in the archive yet.
+    # Each holds a few hundred MB.
+    session_cache_size: int = 2
+    session_cache_idle_seconds: int = 1800
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     
     @property

@@ -1,21 +1,17 @@
-import collections
-
 import fastf1
 import pandas as pd
 from fastf1.core import Laps
 import numpy as np
 from fastapi import HTTPException
-from app.utils import KeyLockRegistry, format_lap_time, resolve_event, resolve_session
+from app.archive import reader
+from app.archive.models import StoredLap, StoredSession
+from app.utils import format_lap_time, format_seconds, resolve_event, resolve_session
 
 from app.fastf1_loader import cached_locked_load
 
-_LAP_TELEMETRY_CACHE_MAX = 1024
-_lap_telemetry_cache: "collections.OrderedDict[tuple, dict]" = collections.OrderedDict()
-_lap_telemetry_locks = KeyLockRegistry()
-
-_LAPS_CACHE_MAX = 256
-_laps_cache: "collections.OrderedDict[tuple, list]" = collections.OrderedDict()
-_laps_locks = KeyLockRegistry()
+PRACTICE_SESSION_NAMES = {"Practice 1", "Practice 2", "Practice 3", "Practice 4"}
+# Identifiers whose laps are split into Q1-Q3 segments.
+QUALIFYING_IDENTIFIERS = ("Q", "SQ")
 
 IDENTIFIER_MAP = {
     "FP1": "Practice 1",
@@ -34,12 +30,46 @@ def _get_session_date(event, identifier: str):
             return str(event.get(f"Session{i}DateUtc"))
     return None
 
+def _archived_session(year: int, event_id: str, identifier: str) -> StoredSession | None:
+    archive = reader.current()
+    return archive.session(year, event_id, identifier) if archive is not None else None
+
+
+def _session_info_from_archive(stored: StoredSession) -> dict:
+    is_practice = stored.name in PRACTICE_SESSION_NAMES
+    return {
+        "event_name": stored.event.name,
+        "name": stored.name,
+        "date": stored.event.date,
+        "country": stored.event.country,
+        "location": stored.event.location,
+        "drivers": [
+            {
+                "number": d.number,
+                "abbreviation": d.abbreviation,
+                "full_name": d.full_name,
+                "team_name": d.team_name,
+                "team_color": d.team_color,
+                "status": d.status,
+                "classified_position": d.classified_position,
+                "position": d.position,
+                "grid_position": d.grid_position,
+                "participated": is_practice or d.grid_position is not None or d.position is not None,
+            }
+            for d in stored.drivers
+        ],
+    }
+
+
 def get_session(year: int, event_id: str, identifier: str):
+    stored = _archived_session(year, event_id, identifier)
+    if stored is not None:
+        return _session_info_from_archive(stored)
     event = resolve_event(year, event_id)
     session = resolve_session(year, event_id, identifier)
     session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=True)
     
-    is_practice = session.name in ["Practice 1", "Practice 2", "Practice 3", "Practice 4"]
+    is_practice = session.name in PRACTICE_SESSION_NAMES
     
     drivers = [
         {
@@ -69,70 +99,103 @@ def get_session(year: int, event_id: str, identifier: str):
         "drivers": drivers
     }
 
+def _compound(value) -> str | None:
+    return None if pd.isna(value) else str(value) or None
+
+
 def _format_laps(driver_laps: Laps | None) -> list:
     if driver_laps is None or driver_laps.empty:
         return []
     laps = []
     for _, lap in driver_laps.iterlaps():
+        is_personal_best = lap.get("IsPersonalBest", False)
         laps.append({
             "lap_number": int(lap["LapNumber"]) if not pd.isna(lap.get("LapNumber")) else None,
             "lap_time": format_lap_time(lap.get("LapTime")),
             "sector1": format_lap_time(lap.get("Sector1Time")),
             "sector2": format_lap_time(lap.get("Sector2Time")),
             "sector3": format_lap_time(lap.get("Sector3Time")),
-            "compound": str(lap.get("Compound", "")) or None,
-            "is_personal_best": bool(lap.get("IsPersonalBest", False)),
+            "compound": _compound(lap.get("Compound")),
+            "is_personal_best": False if pd.isna(is_personal_best) else bool(is_personal_best),
         })
     return laps
 
+
+def _format_stored_laps(laps: list[StoredLap]) -> list:
+    return [
+        {
+            "lap_number": lap.lap_number,
+            "lap_time": format_seconds(lap.lap_time),
+            "sector1": format_seconds(lap.sector1),
+            "sector2": format_seconds(lap.sector2),
+            "sector3": format_seconds(lap.sector3),
+            "compound": lap.compound or None,
+            "is_personal_best": lap.is_personal_best,
+        }
+        for lap in laps
+    ]
+
+
+def _driver_laps_from_archive(stored: StoredSession, abbreviations: list[str]) -> list:
+    laps_by_driver = reader.current().driver_laps(stored, abbreviations)
+    result = []
+    for abbreviation in abbreviations:
+        driver_laps = laps_by_driver.get(abbreviation)
+        if driver_laps is None:
+            continue
+        if stored.identifier in QUALIFYING_IDENTIFIERS:
+            segments = [
+                {"name": f"Q{part}", "laps": _format_stored_laps([l for l in driver_laps.laps if l.qualifying_part == part])}
+                for part in (1, 2, 3)
+            ]
+        else:
+            segments = [{"name": stored.identifier, "laps": _format_stored_laps(driver_laps.laps)}]
+        result.append({"abbreviation": abbreviation, "segments": segments})
+    return result
+
+
 def get_driver_laps(year: int, event_id: str, identifier: str, drivers: str):
     identifier = identifier.upper()
-    key = (year, event_id, identifier, drivers)
-    with _laps_locks.get(key):
-        cached = _laps_cache.get(key)
-        if cached is not None:
-            _laps_cache.move_to_end(key)
-            return cached
-        abbreviations = [d.strip() for d in drivers.split(',')]
-        session = resolve_session(year, event_id, identifier)
-        session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
-        driver_laps = session.laps.pick_drivers(abbreviations)
-        grouped = driver_laps.groupby("Driver")
-        result = []
-        
-        for abbreviation in abbreviations:
-            if abbreviation not in grouped.groups:
-                continue
-            group = grouped.get_group(abbreviation)
-            if identifier in ("Q", "SQ"):
-                q1, q2, q3 = group.split_qualifying_sessions()
-                segments = [
-                    {
-                        "name": "Q1",
-                        "laps": _format_laps(q1)
-                    },
-                    {
-                        "name": "Q2",
-                        "laps": _format_laps(q2)
-                    },
-                    {
-                        "name": "Q3",
-                        "laps": _format_laps(q3)
-                    },
-                ]
-            else:
-                segments = [{
-                    "name": identifier,
-                    "laps": _format_laps(group)
-                    }]
-            result.append({
-                "abbreviation": abbreviation,
-                "segments": segments
-            })
-        _laps_cache[key] = result
-        while len(_laps_cache) > _LAPS_CACHE_MAX:
-            _laps_cache.popitem(last=False)
-        return result
+    abbreviations = [d.strip() for d in drivers.split(',')]
+    stored = _archived_session(year, event_id, identifier)
+    if stored is not None:
+        return _driver_laps_from_archive(stored, abbreviations)
+    session = resolve_session(year, event_id, identifier)
+    session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
+    driver_laps = session.laps.pick_drivers(abbreviations)
+    grouped = driver_laps.groupby("Driver")
+    result = []
+
+    for abbreviation in abbreviations:
+        if abbreviation not in grouped.groups:
+            continue
+        group = grouped.get_group(abbreviation)
+        if identifier in QUALIFYING_IDENTIFIERS:
+            q1, q2, q3 = group.split_qualifying_sessions()
+            segments = [
+                {
+                    "name": "Q1",
+                    "laps": _format_laps(q1)
+                },
+                {
+                    "name": "Q2",
+                    "laps": _format_laps(q2)
+                },
+                {
+                    "name": "Q3",
+                    "laps": _format_laps(q3)
+                },
+            ]
+        else:
+            segments = [{
+                "name": identifier,
+                "laps": _format_laps(group)
+                }]
+        result.append({
+            "abbreviation": abbreviation,
+            "segments": segments
+        })
+    return result
 
 def load_session(year: int, round: int, identifier: str):
     session = fastf1.get_session(year, round, identifier)
@@ -228,7 +291,7 @@ def _build_lap_telemetry(session, driver: str, lap_number: int) -> dict | None:
         "driver": driver,
         "lap_number": lap_number,
         "lap_time": lap_time,
-        "compound": str(lap_row.get("Compound", "")) or None,
+        "compound": _compound(lap_row.get("Compound")),
         "tyre_life": int(lap_row["TyreLife"]) if pd.notna(lap_row.get("TyreLife")) else None,
         "channels": {
             "time": car_data["Time"].dt.total_seconds().tolist(),
@@ -245,30 +308,62 @@ def _build_lap_telemetry(session, driver: str, lap_number: int) -> dict | None:
     }
 
 
-def _get_or_build_lap(session, year: int, event_id: str, identifier: str, driver: str, lap_number: int) -> dict | None:
-    key = (year, event_id, str(identifier).upper(), driver, lap_number)
-    with _lap_telemetry_locks.get(key):
-        cached = _lap_telemetry_cache.get(key)
-        if cached is not None:
-            _lap_telemetry_cache.move_to_end(key)
-            return cached
-        lap = _build_lap_telemetry(session, driver, lap_number)
-        if lap is None:
-            return None
-        _lap_telemetry_cache[key] = lap
-        while len(_lap_telemetry_cache) > _LAP_TELEMETRY_CACHE_MAX:
-            _lap_telemetry_cache.popitem(last=False)
-        return lap
+def _lap_telemetry_from_archive(stored: StoredSession, selections: list[tuple[str, list[int]]]) -> list:
+    archive = reader.current()
+    laps_by_driver = archive.driver_laps(stored, [driver for driver, _ in selections])
+    wanted: list[tuple[str, StoredLap]] = []
+    for driver, lap_numbers in selections:
+        driver_laps = laps_by_driver.get(driver)
+        if driver_laps is None:
+            continue
+        by_number: dict[int, StoredLap] = {}
+        for lap in driver_laps.laps:
+            if lap.lap_number is not None:
+                by_number.setdefault(lap.lap_number, lap)
+        for lap_number in lap_numbers:
+            lap = by_number.get(lap_number)
+            if lap is not None and lap.has_telemetry:
+                wanted.append((driver, lap))
+    telemetry = archive.lap_telemetry(stored, [(driver, lap.lap_number) for driver, lap in wanted])
+
+    result = []
+    for driver, lap in wanted:
+        tel = telemetry.get((driver, lap.lap_number))
+        if tel is None:
+            continue
+        result.append({
+            "driver": driver,
+            "lap_number": lap.lap_number,
+            "lap_time": lap.lap_time,
+            "compound": lap.compound or None,
+            "tyre_life": lap.tyre_life,
+            "channels": {
+                "time": tel.car.time,
+                "speed": tel.car.speed,
+                "throttle": tel.car.throttle,
+                "brake": tel.car.brake,
+                "gear": tel.car.gear,
+                "drs": tel.car.drs,
+                "distance": tel.car.distance,
+                "rpm": tel.car.rpm,
+                "x": tel.pos.x,
+                "y": tel.pos.y,
+            },
+        })
+    return result
 
 
 def get_lap_telemetry(year: int, event_id: str, identifier: str, selected_laps: str):
     selections = _parse_selected_laps(selected_laps)
+    stored = _archived_session(year, event_id, identifier)
+    if stored is not None:
+        return _lap_telemetry_from_archive(stored, selections)
     session = resolve_session(year, event_id, identifier)
     session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
     result = []
     for driver, lap_numbers in selections:
         for lap_number in lap_numbers:
-            lap = _get_or_build_lap(session, year, event_id, identifier, driver, lap_number)
+            lap = _build_lap_telemetry(session, driver, lap_number)
             if lap is not None:
                 result.append(lap)
     return result
