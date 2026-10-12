@@ -181,6 +181,7 @@ def _loaded_session(**overrides):
         "pos_data": {"1": frame(), "16": frame()},
         "results": frame(),
         "weather_data": frame(),
+        "race_control_messages": frame(),
     }
     parts.update(overrides)
     return SimpleNamespace(**parts)
@@ -191,11 +192,14 @@ def test_missing_parts_none_for_a_complete_session():
 
 
 def test_missing_parts_reports_empty_parts():
-    session = _loaded_session(pos_data={}, car_data={"1": pd.DataFrame()}, weather_data=None)
+    session = _loaded_session(
+        pos_data={}, car_data={"1": pd.DataFrame()}, weather_data=None, race_control_messages=pd.DataFrame()
+    )
     assert _missing_parts(session) == [
         "car data for 2 of 2 drivers",
         "position data for 2 of 2 drivers",
         "weather",
+        "race control messages",
     ]
 
 

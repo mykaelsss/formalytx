@@ -260,7 +260,11 @@ def _missing_parts(session: Session) -> list[str]:
         absent = [d for d in drivers if d not in data or data[d].empty]
         if absent:
             missing.append(f"{label} for {len(absent)} of {len(drivers)} drivers")
-    for attr, label in (("results", "results"), ("weather_data", "weather")):
+    for attr, label in (
+        ("results", "results"),
+        ("weather_data", "weather"),
+        ("race_control_messages", "race control messages"),
+    ):
         data = loaded(attr)
         if data is None or data.empty:
             missing.append(label)
@@ -485,7 +489,9 @@ def export_session(
         logger.info("Skipping %s %s %s: %s", year, event_id, identifier, reason.value)
         return reason
     with _capture_load_failures() as load:
-        session.load(laps=True, telemetry=True, weather=True, messages=False)
+        # Race control messages are what FastF1 marks deleted laps (and so
+        # personal bests and quali-like results) from.
+        session.load(laps=True, telemetry=True, weather=True, messages=True)
     failures = load.failures + _missing_parts(session)
     if failures and not allow_incomplete:
         raise IncompleteLoadError(failures)
