@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import fastf1
 import numpy as np
 import pandas as pd
+from fastf1 import utils as fastf1_utils
 from fastf1.core import Lap, Session
 from fastf1.exceptions import DataNotLoadedError
 
@@ -439,7 +440,13 @@ class _LoadFailures(logging.Handler):
     FastF1 wraps each part of Session.load in a catch-all that logs a warning
     and leaves that part empty, so a network error would otherwise go
     unnoticed. It logs each caught exception at DEBUG with exc_info.
+
+    Its value parsers log the same way when a single value isn't a time, e.g.
+    a "+1 L" gap to a lapping car, which FastF1 expects and skips, so those
+    aren't failures.
     """
+
+    _EXPECTED = frozenset({fastf1_utils._logger.name})
 
     def __init__(self) -> None:
         super().__init__(logging.DEBUG)
@@ -448,7 +455,9 @@ class _LoadFailures(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         # Loads in other threads (e.g. API requests) aren't this export's.
-        if record.thread == self._thread and record.exc_info and record.exc_info[1] is not None:
+        if record.thread != self._thread or record.name in self._EXPECTED:
+            return
+        if record.exc_info and record.exc_info[1] is not None:
             self.failures.append(f"{record.getMessage()} ({record.exc_info[1]!r})")
 
 

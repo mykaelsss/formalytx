@@ -8,6 +8,7 @@ import pytest
 import requests
 from fastf1.exceptions import DataNotLoadedError
 from fastf1.logger import get_logger, soft_exceptions
+from fastf1.utils import to_timedelta
 
 from app.archive import export
 from app.archive.export import (
@@ -137,6 +138,13 @@ def test_capture_load_failures_collects_errors_fastf1_swallows():
     assert len(load.failures) == 1
     assert "telemetry data" in load.failures[0]
     assert "connection reset" in load.failures[0]
+
+
+def test_capture_load_failures_ignores_values_fastf1_skips():
+    # FastF1 parses gaps as times and skips those to lapping cars.
+    with _capture_load_failures() as load:
+        assert to_timedelta("+1 L") is None
+    assert load.failures == []
 
 
 def test_capture_load_failures_ignores_other_threads():
