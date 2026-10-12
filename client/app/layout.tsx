@@ -11,6 +11,7 @@ import Nav from "@/components/Nav"
 import { Analytics } from "@vercel/analytics/next"
 import { SpeedInsights } from '@vercel/speed-insights/next';
 import { NuqsAdapter } from 'nuqs/adapters/next/app'
+import { ADSENSE_CLIENT } from "@/lib/ads"
 
   const exo2 = Exo_2({
     subsets: ['latin'],
@@ -31,6 +32,7 @@ export const metadata: Metadata = {
   description:
     "Compare Formula 1 driver lap times, sector splits, and speed traces across every session. Explore qualifying results, race telemetry, and historical F1 data — powered by FastF1.",
   robots: { index: true, follow: true },
+  other: { "google-adsense-account": ADSENSE_CLIENT },
   alternates: { canonical: "https://formalytx.com" },
   openGraph: {
     type: "website",
@@ -89,6 +91,12 @@ export default function RootLayout({
       className={cn("h-full", "antialiased", exo2.variable, robotoMono.variable)}
     >
       <body className="bg-background min-h-full flex flex-col">
+        {/* Plain tag rather than next/script: AdSense rejects the data-nscript attribute next/script adds. React hoists async scripts into <head>. */}
+        <script
+          async
+          src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`}
+          crossOrigin="anonymous"
+        />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
