@@ -5,7 +5,7 @@ import time
 import pytest
 from fastapi import HTTPException
 
-from app.utils import KeyLockRegistry, parse_event_id
+from app.utils import KeyLockRegistry, LockWaitTimeout, parse_event_id
 
 
 @pytest.mark.parametrize(
@@ -124,3 +124,50 @@ def test_key_lock_registry_does_not_grow_unbounded():
         pass
     gc.collect()
     assert len(reg._locks) == before
+
+
+def test_key_lock_registry_times_out_instead_of_waiting_forever():
+    """A holder stuck on a hung upstream call must not block later requests
+    for the same key indefinitely."""
+    reg = KeyLockRegistry(timeout=0.05)
+    started = time.monotonic()
+    with reg.get(("k",)):
+        with pytest.raises(LockWaitTimeout):
+            with reg.get(("k",)):
+                pass
+    assert time.monotonic() - started < 1.0
+
+
+def test_key_lock_registry_usable_after_wait_timeout():
+    reg = KeyLockRegistry(timeout=0.05)
+    with reg.get(("k",)):
+        with pytest.raises(LockWaitTimeout):
+            with reg.get(("k",)):
+                pass
+    with reg.get(("k",)):
+        pass
+
+
+def test_key_lock_registry_waiter_gets_lock_once_released_in_time():
+    reg = KeyLockRegistry(timeout=2.0)
+    holding = threading.Event()
+    acquired = threading.Event()
+
+    def holder():
+        with reg.get(("k",)):
+            holding.set()
+            time.sleep(0.1)
+
+    def waiter():
+        holding.wait(timeout=2.0)
+        with reg.get(("k",)):
+            acquired.set()
+
+    t1 = threading.Thread(target=holder)
+    t2 = threading.Thread(target=waiter)
+    t1.start()
+    t2.start()
+    t1.join(timeout=3.0)
+    t2.join(timeout=3.0)
+
+    assert acquired.is_set()

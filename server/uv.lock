@@ -1173,6 +1173,7 @@ dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "fastf1" },
     { name = "pydantic-settings" },
+    { name = "requests" },
 ]
 
 [package.dev-dependencies]
@@ -1186,6 +1187,7 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.135.3" },
     { name = "fastf1", specifier = ">=3.8.2" },
     { name = "pydantic-settings", specifier = ">=2.13.1" },
+    { name = "requests", specifier = ">=2.33.1" },
 ]
 
 [package.metadata.requires-dev]

@@ -1,9 +1,14 @@
 import os
+import socket
 import threading
 import time
 from collections import namedtuple
 
+import fastf1
 import pytest
+import requests
+import requests_cache
+from requests.adapters import HTTPAdapter
 
 from app import fastf1_loader
 
@@ -307,3 +312,67 @@ def test_cached_locked_load_evicts_lru_at_cap(monkeypatch):
     assert (2025, "r1", "R") not in fastf1_loader._session_cache
     assert (2025, "r2", "R") in fastf1_loader._session_cache
     assert (2025, "r3", "R") in fastf1_loader._session_cache
+
+
+@pytest.fixture
+def unresponsive_url():
+    """An HTTP endpoint that completes the TCP handshake (via the listen
+    backlog) but never sends a response - like a hung upstream."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    yield f"http://127.0.0.1:{server.getsockname()[1]}/"
+    server.close()
+
+
+def test_timeout_adapter_bounds_requests_to_an_unresponsive_upstream(unresponsive_url):
+    # Same session type FastF1 uses for its HTTP cache.
+    session = requests_cache.CachedSession(backend="memory")
+    session.mount("http://", fastf1_loader._TimeoutHTTPAdapter((1.0, 0.2)))
+
+    started = time.monotonic()
+    with pytest.raises(requests.ReadTimeout):
+        session.get(unresponsive_url)
+    assert time.monotonic() - started < 2.0
+
+
+def test_timeout_adapter_keeps_an_explicit_timeout(monkeypatch):
+    seen = []
+    monkeypatch.setattr(HTTPAdapter, "send", lambda self, request, **kw: seen.append(kw["timeout"]))
+    adapter = fastf1_loader._TimeoutHTTPAdapter((1.0, 2.0))
+
+    adapter.send(object())
+    adapter.send(object(), timeout=5)
+
+    assert seen == [(1.0, 2.0), 5]
+
+
+def test_install_request_timeouts_mounts_on_both_fastf1_sessions(monkeypatch):
+    plain, cached = requests.Session(), requests.Session()
+    monkeypatch.setattr(fastf1.Cache, "_requests_session", plain)
+    monkeypatch.setattr(fastf1.Cache, "_requests_session_cached", cached)
+
+    fastf1_loader.install_request_timeouts(3.0, 7.0)
+
+    for session in (plain, cached):
+        for url in ("https://example.com/", "http://example.com/"):
+            adapter = session.get_adapter(url)
+            assert isinstance(adapter, fastf1_loader._TimeoutHTTPAdapter)
+            assert adapter._default_timeout == (3.0, 7.0)
+
+
+def test_install_request_timeouts_skips_a_missing_session(monkeypatch):
+    plain = requests.Session()
+    monkeypatch.setattr(fastf1.Cache, "_requests_session", plain)
+    monkeypatch.setattr(fastf1.Cache, "_requests_session_cached", None)
+
+    fastf1_loader.install_request_timeouts(3.0, 7.0)
+
+    assert isinstance(plain.get_adapter("https://example.com/"), fastf1_loader._TimeoutHTTPAdapter)
+
+
+def test_fastf1_still_exposes_the_sessions_we_patch():
+    """install_request_timeouts relies on these FastF1 internals; fail here
+    rather than silently losing the timeouts after a FastF1 upgrade."""
+    assert hasattr(fastf1.Cache, "_requests_session")
+    assert hasattr(fastf1.Cache, "_requests_session_cached")

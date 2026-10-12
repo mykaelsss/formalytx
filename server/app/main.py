@@ -1,10 +1,13 @@
 from functools import lru_cache
 
+import faulthandler
 import logging
 import os
+import signal
 from contextlib import asynccontextmanager
 
 import fastf1
+import requests
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,9 +23,10 @@ from fastf1.exceptions import (
 
 from . import config
 from app.etag import ETagMiddleware
-from app.fastf1_loader import set_cache_dir, start_pruner
+from app.fastf1_loader import install_request_timeouts, set_cache_dir, start_pruner
 from app.sessions.routes import router as session_router
 from app.schedule.routes import router as schedule_router
+from app.utils import LockWaitTimeout
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -42,7 +46,15 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     os.makedirs(settings.fastf1_cache_dir, exist_ok=True)
     fastf1.Cache.enable_cache(settings.fastf1_cache_dir)
+    install_request_timeouts(
+        settings.upstream_connect_timeout_seconds,
+        settings.upstream_read_timeout_seconds,
+    )
     set_cache_dir(settings.fastf1_cache_dir)
+    # `kill -USR1 <pid>` dumps every thread's stack to stderr (the deploy logs)
+    # so a stuck request can be diagnosed in production without a restart.
+    if hasattr(signal, "SIGUSR1"):
+        faulthandler.register(signal.SIGUSR1, all_threads=True)
     stop_pruner = start_pruner(
         settings.fastf1_cache_dir,
         settings.cache_high_water,
@@ -81,11 +93,31 @@ async def _upstream_error(request: Request, exc: Exception) -> JSONResponse:
     return _error(502, "Failed to retrieve data from the upstream provider.")
 
 
+async def _upstream_request_failed(request: Request, exc: Exception) -> JSONResponse:
+    # FastF1 swallows most request errors itself; these are the ones that escape.
+    if isinstance(exc, requests.Timeout):
+        logger.error("Upstream timeout for %s: %s", request.url.path, exc)
+        return _error(504, "The upstream data provider did not respond in time. Please try again shortly.")
+    return await _upstream_error(request, exc)
+
+
+async def _lock_wait_timeout(request: Request, exc: Exception) -> JSONResponse:
+    # Another request for the same data is still running (or stuck upstream).
+    logger.warning("Lock wait timed out for %s: %s", request.url.path, exc)
+    return _error(
+        503,
+        "This data is still being loaded. Please try again shortly.",
+        headers={"Retry-After": "30"},
+    )
+
+
 for _exc in (ValueError, InvalidSessionError, NoLapDataError, SessionNotAvailableError, DataNotLoadedError):
     app.add_exception_handler(_exc, _not_found)
 app.add_exception_handler(RateLimitExceededError, _rate_limited)
 app.add_exception_handler(FastF1CriticalError, _upstream_error)
 app.add_exception_handler(ErgastError, _upstream_error)
+app.add_exception_handler(requests.RequestException, _upstream_request_failed)
+app.add_exception_handler(LockWaitTimeout, _lock_wait_timeout)
 
 app.add_middleware(ETagMiddleware)
 

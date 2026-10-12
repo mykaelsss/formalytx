@@ -8,6 +8,7 @@ dependencies = [
     "fastapi[standard]>=0.135.3",
     "fastf1>=3.8.2",
     "pydantic-settings>=2.13.1",
+    "requests>=2.33.1",
 ]
 
 [dependency-groups]
