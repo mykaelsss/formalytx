@@ -11,6 +11,10 @@ production bucket.
 Sessions already exported are skipped unless their results have since become
 final. --overwrite exports them again anyway; --force also exports sessions
 that ended less than EXPORT_DELAY ago or whose end time is unknown.
+
+A session FastF1 fails to load completely isn't exported, since it would stay
+incomplete in the archive. Run it again later; if the data doesn't exist
+upstream, --allow-incomplete exports it with the missing parts recorded.
 """
 
 import argparse
@@ -22,7 +26,7 @@ from collections import Counter
 import fastf1
 
 from app.archive.archive import open_archive
-from app.archive.export import export_session
+from app.archive.export import IncompleteLoadError, export_session
 from app.config import Settings
 from app.fastf1_loader import install_request_timeouts
 from app.schedule.services import get_event, get_schedule
@@ -50,6 +54,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("identifier", nargs="?", help="e.g. FP1, Q or R")
     parser.add_argument("--overwrite", action="store_true", help="export sessions that are already exported")
     parser.add_argument("--force", action="store_true", help="export sessions that may not be finished yet")
+    parser.add_argument(
+        "--allow-incomplete", action="store_true", help="export sessions FastF1 can only partly load"
+    )
     args = parser.parse_args(argv)
     if args.identifier and not args.event_id:
         parser.error("identifier requires event_id")
@@ -64,14 +71,26 @@ def main(argv: list[str] | None = None) -> int:
     fastf1.Cache.enable_cache(settings.fastf1_cache_dir)
     install_request_timeouts(settings.upstream_connect_timeout_seconds, settings.upstream_read_timeout_seconds)
     # FastF1 logs every cache read at INFO; keep the export progress readable.
-    logging.getLogger("fastf1").setLevel(logging.WARNING)
+    # Only its console output is quieted: the export reads FastF1's DEBUG
+    # records to notice parts that failed to load.
+    fastf1.set_log_level(logging.WARNING)
+    logging.getLogger("fastf1").propagate = False
 
     outcomes: Counter[str] = Counter()
     for event_id, identifier in _sessions(args.year, args.event_id, args.identifier):
         try:
             outcome = export_session(
-                archive, args.year, event_id, identifier, force=args.force, overwrite=args.overwrite
+                archive,
+                args.year,
+                event_id,
+                identifier,
+                force=args.force,
+                overwrite=args.overwrite,
+                allow_incomplete=args.allow_incomplete,
             )
+        except IncompleteLoadError as exc:
+            logger.error("Not exporting %s %s %s: %s", args.year, event_id, identifier, exc)
+            outcomes["failed"] += 1
         except Exception:
             logger.exception("Failed to export %s %s %s", args.year, event_id, identifier)
             outcomes["failed"] += 1

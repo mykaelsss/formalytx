@@ -1,16 +1,24 @@
+import threading
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import pytest
+import requests
+from fastf1.exceptions import DataNotLoadedError
+from fastf1.logger import get_logger, soft_exceptions
 
+from app.archive import export
 from app.archive.export import (
     EXPORT_DELAY,
     ExportOutcome,
+    IncompleteLoadError,
+    _capture_load_failures,
     _cast_list,
     _float_list,
     _int,
+    _missing_parts,
     _seconds,
     _str,
     results_final,
@@ -112,3 +120,90 @@ def test_cast_list():
     assert _cast_list(pd.Series([8, 7], dtype="int8"), int) == [8, 7]
     assert _cast_list(pd.Series([True, None], dtype="object"), bool) == [True, None]
     assert all(type(v) is int for v in _cast_list(pd.Series([8, 7], dtype="int8"), int))
+
+
+def _soft_failing_load(*args, **kwargs):
+    # Stands in for a part of Session.load, which FastF1 wraps the same way.
+    @soft_exceptions("telemetry data", "Failed to load telemetry data!", get_logger("core"))
+    def load_telemetry():
+        raise requests.ConnectionError("connection reset")
+
+    load_telemetry()
+
+
+def test_capture_load_failures_collects_errors_fastf1_swallows():
+    with _capture_load_failures() as load:
+        _soft_failing_load()
+    assert len(load.failures) == 1
+    assert "telemetry data" in load.failures[0]
+    assert "connection reset" in load.failures[0]
+
+
+def test_capture_load_failures_ignores_other_threads():
+    with _capture_load_failures() as load:
+        thread = threading.Thread(target=_soft_failing_load)
+        thread.start()
+        thread.join()
+    assert load.failures == []
+
+
+@pytest.fixture
+def partly_loading_session(monkeypatch):
+    session = _loaded_session(load=_soft_failing_load)
+    monkeypatch.setattr(export, "resolve_session", lambda *args: session)
+    monkeypatch.setattr(export, "session_start_utc", lambda s: END)
+    monkeypatch.setattr(export, "session_end_utc", lambda s, start: END)
+    exported = []
+    monkeypatch.setattr(export, "export_loaded_session", lambda *args, **kwargs: exported.append(kwargs))
+    archive = SimpleNamespace(get_session=lambda *args: None)
+    return archive, exported
+
+
+def test_export_session_refuses_a_partly_loaded_session(partly_loading_session):
+    archive, exported = partly_loading_session
+    with pytest.raises(IncompleteLoadError, match="telemetry data"):
+        export.export_session(archive, 2025, "r16", "R", now=END + EXPORT_DELAY)
+    assert exported == []
+
+
+def test_export_session_allow_incomplete_records_the_failures(partly_loading_session):
+    archive, exported = partly_loading_session
+    outcome = export.export_session(archive, 2025, "r16", "R", allow_incomplete=True, now=END + EXPORT_DELAY)
+    assert outcome is ExportOutcome.EXPORTED
+    assert len(exported[0]["load_failures"]) == 1
+
+
+def _loaded_session(**overrides):
+    frame = lambda: pd.DataFrame({"Time": [pd.Timedelta(0)]})
+    parts = {
+        "laps": pd.DataFrame({"DriverNumber": ["1", "16"]}),
+        "car_data": {"1": frame(), "16": frame()},
+        "pos_data": {"1": frame(), "16": frame()},
+        "results": frame(),
+        "weather_data": frame(),
+    }
+    parts.update(overrides)
+    return SimpleNamespace(**parts)
+
+
+def test_missing_parts_none_for_a_complete_session():
+    assert _missing_parts(_loaded_session()) == []
+
+
+def test_missing_parts_reports_empty_parts():
+    session = _loaded_session(pos_data={}, car_data={"1": pd.DataFrame()}, weather_data=None)
+    assert _missing_parts(session) == [
+        "car data for 2 of 2 drivers",
+        "position data for 2 of 2 drivers",
+        "weather",
+    ]
+
+
+def test_missing_parts_reports_parts_that_failed_to_load():
+    class NotLoaded(SimpleNamespace):
+        @property
+        def results(self):
+            raise DataNotLoadedError("results")
+
+    session = NotLoaded(**vars(_loaded_session(laps=pd.DataFrame({"DriverNumber": []}))))
+    assert _missing_parts(session) == ["laps", "results"]

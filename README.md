@@ -174,6 +174,8 @@ infisical run --env=prod -- uv run python -m app.archive 2025
 
 Sessions already exported are skipped unless their results have since become final.
 `--overwrite` exports them again, and `--force` also exports sessions that ended less than 6 hours ago.
+A session FastF1 can't fully load (laps, car or position data, results or weather) isn't exported.
+If that data doesn't exist upstream, `--allow-incomplete` exports it with the missing parts recorded.
 
 ### Frontend
 

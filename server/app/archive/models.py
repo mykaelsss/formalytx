@@ -84,6 +84,9 @@ class StoredSession(BaseModel):
     lap_drivers: list[str]
     fastest_lap: StoredFastestLap | None
     weather: StoredWeather | None
+    # Parts FastF1 failed to load, when the session was exported anyway
+    # (`--allow-incomplete`) because the data doesn't exist upstream.
+    load_failures: list[str] = []
 
 
 class StoredLap(BaseModel):

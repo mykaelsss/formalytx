@@ -2,8 +2,11 @@
 
 import enum
 import logging
+import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import fastf1
@@ -229,20 +232,58 @@ def _qualifying_parts(session: Session) -> dict:
 
 def _telemetry_loaded(session: Session) -> bool:
     try:
-        return bool(session.car_data) and bool(session.pos_data)
+        return bool(session.car_data)
     except DataNotLoadedError:
         return False
+
+
+def _missing_parts(session: Session) -> list[str]:
+    """Parts of a loaded session that came back empty.
+
+    FastF1 reports some failed requests only as a warning, e.g. "Car position
+    data is unavailable!", so these are checked on the data itself.
+    """
+
+    def loaded(attr: str):
+        try:
+            return getattr(session, attr)
+        except DataNotLoadedError:
+            return None
+
+    missing = []
+    laps = loaded("laps")
+    drivers = [] if laps is None else [str(n) for n in laps["DriverNumber"].dropna().unique()]
+    if not drivers:
+        missing.append("laps")
+    for attr, label in (("car_data", "car data"), ("pos_data", "position data")):
+        data = loaded(attr) or {}
+        absent = [d for d in drivers if d not in data or data[d].empty]
+        if absent:
+            missing.append(f"{label} for {len(absent)} of {len(drivers)} drivers")
+    for attr, label in (("results", "results"), ("weather_data", "weather")):
+        data = loaded(attr)
+        if data is None or data.empty:
+            missing.append(label)
+    return missing
 
 
 def _lap_telemetry(lap: Lap, driver: str, lap_number: int) -> StoredLapTelemetry | None:
     try:
         car = lap.get_car_data().add_distance()
-        pos = lap.get_pos_data()
     except Exception:
         logger.debug("No telemetry for %s lap %s", driver, lap_number, exc_info=True)
         return None
     if car.empty:
         return None
+    # Some sessions (e.g. early 2018) lack position data for some or all laps;
+    # the car data is still worth keeping without the track position.
+    try:
+        pos = lap.get_pos_data()
+    except Exception:
+        logger.debug("No position data for %s lap %s", driver, lap_number, exc_info=True)
+        pos = pd.DataFrame(columns=["Time", "X", "Y"])
+    if pos.empty:
+        pos = pd.DataFrame(columns=["Time", "X", "Y"])
     return StoredLapTelemetry(
         driver=driver,
         lap_number=lap_number,
@@ -305,6 +346,7 @@ def export_loaded_session(
     identifier: str,
     *,
     now: datetime,
+    load_failures: list[str] | None = None,
     upload_workers: int = 16,
 ) -> StoredSession:
     """Write a session loaded with laps, telemetry and weather to the archive.
@@ -368,6 +410,7 @@ def export_loaded_session(
         lap_drivers=lap_drivers,
         fastest_lap=_fastest_lap(session) if lap_drivers else None,
         weather=_stored_weather(session),
+        load_failures=load_failures or [],
     )
     archive.put_session(stored)
     logger.info(
@@ -375,6 +418,45 @@ def export_loaded_session(
         year, event_id, identifier, len(lap_drivers), telemetry_count, time.monotonic() - started,
     )
     return stored
+
+
+class IncompleteLoadError(RuntimeError):
+    """FastF1 failed to load part of a session, so exporting it would archive
+    the session with that part missing for good."""
+
+    def __init__(self, failures: list[str]):
+        super().__init__("FastF1 failed to load " + "; ".join(failures))
+        self.failures = failures
+
+
+class _LoadFailures(logging.Handler):
+    """Collects the errors FastF1 catches while loading a session.
+
+    FastF1 wraps each part of Session.load in a catch-all that logs a warning
+    and leaves that part empty, so a network error would otherwise go
+    unnoticed. It logs each caught exception at DEBUG with exc_info.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self._thread = threading.get_ident()
+        self.failures: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # Loads in other threads (e.g. API requests) aren't this export's.
+        if record.thread == self._thread and record.exc_info and record.exc_info[1] is not None:
+            self.failures.append(f"{record.getMessage()} ({record.exc_info[1]!r})")
+
+
+@contextmanager
+def _capture_load_failures() -> Iterator[_LoadFailures]:
+    fastf1_logger = logging.getLogger("fastf1")
+    handler = _LoadFailures()
+    fastf1_logger.addHandler(handler)
+    try:
+        yield handler
+    finally:
+        fastf1_logger.removeHandler(handler)
 
 
 def export_session(
@@ -385,10 +467,15 @@ def export_session(
     *,
     force: bool = False,
     overwrite: bool = False,
+    allow_incomplete: bool = False,
     now: datetime | None = None,
 ) -> ExportOutcome:
     """Load a session from FastF1 and export it, unless it isn't ready yet or
-    is already exported (see skip_reason)."""
+    is already exported (see skip_reason).
+
+    Raises IncompleteLoadError when FastF1 fails to load part of the session,
+    unless allow_incomplete is set for data that doesn't exist upstream.
+    """
     now = now or datetime.now(timezone.utc)
     session = resolve_session(year, event_id, identifier)
     end = session_end_utc(session, session_start_utc(session))
@@ -397,6 +484,10 @@ def export_session(
     if reason is not None:
         logger.info("Skipping %s %s %s: %s", year, event_id, identifier, reason.value)
         return reason
-    session.load(laps=True, telemetry=True, weather=True, messages=False)
-    export_loaded_session(archive, session, year, event_id, identifier, now=now)
+    with _capture_load_failures() as load:
+        session.load(laps=True, telemetry=True, weather=True, messages=False)
+    failures = load.failures + _missing_parts(session)
+    if failures and not allow_incomplete:
+        raise IncompleteLoadError(failures)
+    export_loaded_session(archive, session, year, event_id, identifier, now=now, load_failures=failures)
     return ExportOutcome.EXPORTED
