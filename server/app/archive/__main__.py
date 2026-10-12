@@ -4,8 +4,9 @@
     infisical run -- uv run python -m app.archive 2025 r16      # every session of one event
     infisical run -- uv run python -m app.archive 2025 r16 R    # one session
 
-`infisical run` supplies the R2 credentials from Infisical's dev environment;
-pass --env=<name> to it for another.
+`infisical run` supplies the R2 credentials from Infisical's dev environment,
+whose bucket is only for testing. Pass --env=prod to it to export into the
+production bucket.
 
 Sessions already exported are skipped unless their results have since become
 final. --overwrite exports them again anyway; --force also exports sessions

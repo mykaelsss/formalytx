@@ -165,6 +165,13 @@ infisical run -- uv run python -m app.archive 2025 r16      # every session of o
 infisical run -- uv run python -m app.archive 2025 r16 R    # one session
 ```
 
+These write to Infisical's dev environment, whose bucket is only for testing.
+The production bucket, which the backfill fills, is selected with `--env=prod`:
+
+```bash
+infisical run --env=prod -- uv run python -m app.archive 2025
+```
+
 Sessions already exported are skipped unless their results have since become final.
 `--overwrite` exports them again, and `--force` also exports sessions that ended less than 6 hours ago.
 
