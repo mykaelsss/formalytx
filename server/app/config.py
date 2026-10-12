@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     cache_low_water: float = 0.70
     cache_prune_interval_seconds: int = 600
 
+    # FastF1 sets no timeout on its HTTP requests, so an unresponsive upstream
+    # would otherwise block the calling thread forever.
+    upstream_connect_timeout_seconds: float = 10
+    upstream_read_timeout_seconds: float = 30
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     
     @property

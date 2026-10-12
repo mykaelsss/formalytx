@@ -1,4 +1,5 @@
 import pytest
+import requests
 from fastapi.testclient import TestClient
 from fastf1.exceptions import (
     DataNotLoadedError,
@@ -11,6 +12,7 @@ from fastf1.exceptions import (
 
 from app.main import app
 from app.schedule.services import SessionDetailConfig
+from app.utils import LockWaitTimeout
 
 
 STUB_CACHE_CONTROL = "public, max-age=1"
@@ -462,6 +464,10 @@ def test_year_must_be_an_integer(client):
         (FastF1CriticalError("upstream exploded"), 502),
         (ErgastError("ergast down"), 502),
         (RateLimitExceededError("slow down"), 503),
+        (requests.ReadTimeout("no response"), 504),
+        (requests.ConnectTimeout("no connection"), 504),
+        (requests.ConnectionError("refused"), 502),
+        (LockWaitTimeout("still loading"), 503),
     ],
     ids=lambda v: type(v).__name__ if isinstance(v, Exception) else str(v),
 )
@@ -487,6 +493,18 @@ def test_rate_limit_beats_critical_error_handler(client, cache_calls, monkeypatc
 
     assert resp.status_code == 503
     assert resp.headers["Retry-After"] == "60"
+
+
+def test_lock_wait_timeout_asks_client_to_retry(client, cache_calls, monkeypatch):
+    def _raise(*a, **kw):
+        raise LockWaitTimeout("still loading")
+
+    monkeypatch.setattr("app.sessions.routes.get_session", _raise)
+
+    resp = client.get("/sessions/2024/r5/R")
+
+    assert resp.status_code == 503
+    assert resp.headers["Retry-After"] == "30"
 
 
 def test_http_exception_from_service_is_preserved(client, cache_calls, monkeypatch):

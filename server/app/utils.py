@@ -7,15 +7,29 @@ from typing import Literal
 from fastapi import HTTPException
 
 
+# Longest a request waits on another request's work for the same key. Kept
+# under Cloudflare's 100s origin timeout so the client gets a 503 it can retry
+# instead of a 524.
+LOCK_WAIT_SECONDS = 60.0
+
+
+class LockWaitTimeout(Exception):
+    """Raised when a key lock isn't released in time - usually because its
+    holder is stuck on a slow or unresponsive upstream request."""
+
+
 class _KeyLock:
     """Plain wrapper around threading.Lock so WeakValueDictionary can track it.
     The built-in Lock doesn't support weak references."""
 
-    def __init__(self):
+    def __init__(self, key: tuple, timeout: float):
         self._lock = threading.Lock()
+        self._key = key
+        self._timeout = timeout
 
     def __enter__(self):
-        self._lock.acquire()
+        if not self._lock.acquire(timeout=self._timeout):
+            raise LockWaitTimeout(f"Timed out after {self._timeout:g}s waiting for {self._key!r}")
         return self
 
     def __exit__(self, *exc):
@@ -25,17 +39,21 @@ class _KeyLock:
 class KeyLockRegistry:
     """One lock per key. Concurrent work on the same key serializes; different
     keys run in parallel. Locks are held weakly so entries disappear once no
-    in-flight caller references them — the registry doesn't grow unboundedly."""
+    in-flight caller references them — the registry doesn't grow unboundedly.
 
-    def __init__(self):
+    Waiting is bounded by `timeout` so one hung holder can't block every later
+    request for the same key forever; waiters raise LockWaitTimeout instead."""
+
+    def __init__(self, timeout: float = LOCK_WAIT_SECONDS):
         self._locks: "weakref.WeakValueDictionary[tuple, _KeyLock]" = weakref.WeakValueDictionary()
         self._guard = threading.Lock()
+        self._timeout = timeout
 
     def get(self, key: tuple) -> _KeyLock:
         with self._guard:
             lock = self._locks.get(key)
             if lock is None:
-                lock = _KeyLock()
+                lock = _KeyLock(key, self._timeout)
                 self._locks[key] = lock
             return lock
 

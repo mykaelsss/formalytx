@@ -6,8 +6,10 @@ import threading
 import time
 import uuid
 
+import fastf1
 from app.utils import KeyLockRegistry
 from fastf1.core import Session
+from requests.adapters import HTTPAdapter
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -24,6 +26,39 @@ _high_water: float = 0.0
 def set_cache_dir(cache_dir: str) -> None:
     global _active_cache_dir
     _active_cache_dir = cache_dir
+
+
+class _TimeoutHTTPAdapter(HTTPAdapter):
+    """Applies a default (connect, read) timeout to requests that don't set one.
+
+    FastF1 never passes a timeout, so without this an upstream that accepts the
+    connection but never answers blocks the calling thread forever.
+    """
+
+    def __init__(self, timeout: tuple[float, float], **kwargs):
+        self._default_timeout = timeout
+        super().__init__(**kwargs)
+
+    def send(self, request, timeout=None, **kwargs):
+        if timeout is None:
+            timeout = self._default_timeout
+        return super().send(request, timeout=timeout, **kwargs)
+
+
+def install_request_timeouts(connect: float, read: float) -> None:
+    """Mount the default-timeout adapter on FastF1's HTTP sessions.
+
+    Call after fastf1.Cache.enable_cache(), which creates the cached session.
+    Relies on FastF1 internals, so a missing session is logged loudly rather
+    than crashing startup after a FastF1 upgrade.
+    """
+    for name in ("_requests_session", "_requests_session_cached"):
+        session = getattr(fastf1.Cache, name, None)
+        if session is None:
+            logger.warning("FastF1 Cache.%s not found - its requests have no timeout", name)
+            continue
+        for prefix in ("https://", "http://"):
+            session.mount(prefix, _TimeoutHTTPAdapter((connect, read)))
 
 
 def _session_cache_dir(session) -> str | None:
