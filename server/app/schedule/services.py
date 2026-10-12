@@ -264,37 +264,41 @@ def get_circuit_info(year: int, event_id: str):
         identifier = 1
         session = resolve_session(year, event_id, identifier)
         session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
-        circuit_info = session.get_circuit_info()
-
-        sector_distances = []
-        try:
-            fastest_lap = session.laps.pick_fastest()
-            if fastest_lap is not None:
-                s1 = fastest_lap.get("Sector1Time")
-                s2 = fastest_lap.get("Sector2Time")
-                if s1 is not None and s2 is not None and not pd.isna(s1) and not pd.isna(s2):
-                    tel = fastest_lap.get_telemetry()
-                    if tel is not None and not tel.empty:
-                        tel_time = tel["Time"].dt.total_seconds()
-                        s1_secs = pd.Timedelta(s1).total_seconds()
-                        s2_secs = s1_secs + pd.Timedelta(s2).total_seconds()
-                        for t in [s1_secs, s2_secs]:
-                            mask = tel_time >= t
-                            if mask.any():
-                                sector_distances.append(float(tel.loc[mask.idxmax(), "Distance"]))
-        except Exception:
-            logger.exception("Error computing sector distances")
-
-        result = {
-            "rotation": circuit_info.rotation,
-            "corners": circuit_info.corners[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
-            "marshal_sectors": circuit_info.marshal_sectors[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
-            "sector_distances": sector_distances,
-        }
+        result = build_circuit_info(session)
         _circuit_cache[key] = result
         while len(_circuit_cache) > _CIRCUIT_CACHE_MAX:
             _circuit_cache.popitem(last=False)
         return result
+
+def build_circuit_info(session: Session) -> dict:
+    """Circuit layout from a session loaded with laps and telemetry."""
+    circuit_info = session.get_circuit_info()
+
+    sector_distances = []
+    try:
+        fastest_lap = session.laps.pick_fastest()
+        if fastest_lap is not None:
+            s1 = fastest_lap.get("Sector1Time")
+            s2 = fastest_lap.get("Sector2Time")
+            if s1 is not None and s2 is not None and not pd.isna(s1) and not pd.isna(s2):
+                tel = fastest_lap.get_telemetry()
+                if tel is not None and not tel.empty:
+                    tel_time = tel["Time"].dt.total_seconds()
+                    s1_secs = pd.Timedelta(s1).total_seconds()
+                    s2_secs = s1_secs + pd.Timedelta(s2).total_seconds()
+                    for t in [s1_secs, s2_secs]:
+                        mask = tel_time >= t
+                        if mask.any():
+                            sector_distances.append(float(tel.loc[mask.idxmax(), "Distance"]))
+    except Exception:
+        logger.exception("Error computing sector distances")
+
+    return {
+        "rotation": circuit_info.rotation,
+        "corners": circuit_info.corners[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
+        "marshal_sectors": circuit_info.marshal_sectors[["X", "Y", "Number", "Angle", "Distance"]].rename(columns=str.lower).to_dict("records"),
+        "sector_distances": sector_distances,
+    }
 
 def get_event(year: int, event_id: str):
     event = resolve_event(year, event_id)
