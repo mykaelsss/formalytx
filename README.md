@@ -134,6 +134,13 @@ These caches are process-local. If you ever run multiple uvicorn workers, each w
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Node.js](https://nodejs.org/) + [pnpm](https://pnpm.io/)
+- [Infisical CLI](https://infisical.com/docs/cli/overview), logged in with `infisical login`
+
+### Secrets
+
+Server secrets live in Infisical, in the project linked by `server/.infisical.json`.
+Run server commands through `infisical run --` from `server/` to supply them.
+`server/.env.example` lists the variables the server reads.
 
 ### Backend
 
