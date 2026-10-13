@@ -31,7 +31,12 @@ from app.archive.models import (
     StoredWeather,
 )
 from app.caching import SETTLE_BUFFER
-from app.schedule.services import SESSION_DURATION_MINUTES, SESSION_NAME_TO_IDENTIFIER, build_circuit_info
+from app.schedule.services import (
+    SESSION_DURATION_MINUTES,
+    SESSION_NAME_TO_IDENTIFIER,
+    CircuitInfoUnavailable,
+    build_circuit_info,
+)
 from app.utils import resolve_session
 
 logger = logging.getLogger("uvicorn.error")
@@ -343,6 +348,16 @@ def _driver_order(session: Session, drivers: list[StoredDriver]) -> list[str]:
     return ordered + [d for d in with_laps if d not in ordered]
 
 
+def _build_circuit(session: Session, year: int, event_id: str) -> StoredCircuit | None:
+    try:
+        return StoredCircuit.model_validate(build_circuit_info(session))
+    except CircuitInfoUnavailable as exc:
+        logger.warning("Could not build circuit info for %s %s: %s", year, event_id, exc)
+    except Exception:
+        logger.exception("Could not build circuit info for %s %s from %s", year, event_id, session.name)
+    return None
+
+
 def export_loaded_session(
     archive: SessionArchive,
     session: Session,
@@ -390,12 +405,13 @@ def export_loaded_session(
             )
             uploads.append(pool.submit(archive.put_driver_laps, year, event_id, identifier, laps))
 
-        if session.name == session.event.get("Session1") and telemetry_loaded:
-            try:
-                circuit = StoredCircuit.model_validate(build_circuit_info(session))
-            except Exception:
-                logger.exception("Could not build circuit info for %s %s", year, event_id)
-            else:
+        # The first session builds the event's circuit info. A later one only
+        # does while the event has none, e.g. when the first was cancelled or
+        # its telemetry is missing upstream.
+        first_session = session.name == session.event.get("Session1")
+        if telemetry_loaded and (first_session or archive.get_circuit(year, event_id) is None):
+            circuit = _build_circuit(session, year, event_id)
+            if circuit is not None:
                 uploads.append(pool.submit(archive.put_circuit, year, event_id, circuit))
 
         for upload in uploads:
@@ -506,3 +522,34 @@ def export_session(
         raise IncompleteLoadError(failures)
     export_loaded_session(archive, session, year, event_id, identifier, now=now, load_failures=failures)
     return ExportOutcome.EXPORTED
+
+
+def export_circuit(
+    archive: SessionArchive,
+    year: int,
+    event_id: str,
+    identifiers: list[str],
+    *,
+    overwrite: bool = False,
+) -> ExportOutcome:
+    """Build an event's circuit info from the first of the given sessions that
+    has a lap with car and position data, without exporting the sessions.
+
+    Raises CircuitInfoUnavailable when none of them has one.
+    """
+    if not overwrite and archive.get_circuit(year, event_id) is not None:
+        logger.info("Skipping circuit info for %s %s: already exported", year, event_id)
+        return ExportOutcome.ALREADY_EXPORTED
+    for identifier in identifiers:
+        session = resolve_session(year, event_id, identifier)
+        # FastF1 leaves parts it can't load empty, which then don't build; an
+        # error it raises (e.g. the rate limit) fails the event instead.
+        session.load(laps=True, telemetry=True, weather=False, messages=False)
+        circuit = _build_circuit(session, year, event_id)
+        if circuit is not None:
+            archive.put_circuit(year, event_id, circuit)
+            logger.info("Exported circuit info for %s %s from %s", year, event_id, identifier)
+            return ExportOutcome.EXPORTED
+    if not identifiers:
+        raise CircuitInfoUnavailable(f"{year} {event_id} has no finished sessions")
+    raise CircuitInfoUnavailable(f"no lap of {year} {event_id} {', '.join(identifiers)} has usable car and position data")

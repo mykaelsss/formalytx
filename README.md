@@ -177,6 +177,14 @@ Sessions already exported are skipped unless their results have since become fin
 A session FastF1 can't fully load (laps, car or position data, results or weather) isn't exported.
 If that data doesn't exist upstream, `--allow-incomplete` exports it with the missing parts recorded.
 
+An event's circuit info is built when its first session is exported.
+If that session has no lap with car and position data, the next session exported builds it instead.
+`--circuit` builds only the circuit info, from the first finished session that can, for events that have none:
+
+```bash
+infisical run --env=prod -- uv run python -m app.archive 2018 r12 --circuit
+```
+
 ### Frontend
 
 ```bash
