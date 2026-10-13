@@ -181,6 +181,17 @@ def test_export_session_allow_incomplete_records_the_failures(partly_loading_ses
     assert len(exported[0]["load_failures"]) == 1
 
 
+def test_export_session_allow_incomplete_when_final_waits_for_final_results(partly_loading_session):
+    archive, exported = partly_loading_session
+    with pytest.raises(IncompleteLoadError):
+        export.export_session(archive, 2025, "r16", "R", allow_incomplete_when_final=True, now=END + EXPORT_DELAY)
+    assert exported == []
+
+    outcome = export.export_session(archive, 2025, "r16", "R", allow_incomplete_when_final=True, now=END + SETTLE_BUFFER)
+    assert outcome is ExportOutcome.EXPORTED
+    assert len(exported[0]["load_failures"]) == 1
+
+
 def _loaded_session(**overrides):
     frame = lambda: pd.DataFrame({"Time": [pd.Timedelta(0)]})
     parts = {

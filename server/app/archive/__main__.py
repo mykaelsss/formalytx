@@ -1,5 +1,6 @@
 """Export finished sessions into the archive.
 
+    infisical run -- uv run python -m app.archive               # every finished session of this season
     infisical run -- uv run python -m app.archive 2025          # every finished session of 2025
     infisical run -- uv run python -m app.archive 2025 r16      # every session of one event
     infisical run -- uv run python -m app.archive 2025 r16 R    # one session
@@ -15,6 +16,11 @@ that ended less than EXPORT_DELAY ago or whose end time is unknown.
 A session FastF1 fails to load completely isn't exported, since it would stay
 incomplete in the archive. Run it again later; if the data doesn't exist
 upstream, --allow-incomplete exports it with the missing parts recorded.
+--allow-incomplete-when-final does that only once the session's results are
+final, so a scheduled export retries it until then and stops after.
+
+The exit status is 1 when a session failed with an error. Sessions skipped as
+incomplete don't count, since the next run retries them.
 """
 
 import argparse
@@ -22,6 +28,7 @@ import logging
 import os
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 
 import fastf1
 
@@ -49,7 +56,7 @@ def _sessions(year: int, event_id: str | None, identifier: str | None) -> list[t
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.archive", description="Export finished sessions into the archive.")
-    parser.add_argument("year", type=int)
+    parser.add_argument("year", type=int, nargs="?", help="defaults to the current season")
     parser.add_argument("event_id", nargs="?", help="e.g. r16 or t1")
     parser.add_argument("identifier", nargs="?", help="e.g. FP1, Q or R")
     parser.add_argument("--overwrite", action="store_true", help="export sessions that are already exported")
@@ -57,9 +64,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow-incomplete", action="store_true", help="export sessions FastF1 can only partly load"
     )
+    parser.add_argument(
+        "--allow-incomplete-when-final",
+        action="store_true",
+        help="export sessions FastF1 can only partly load once their results are final",
+    )
     args = parser.parse_args(argv)
     if args.identifier and not args.event_id:
         parser.error("identifier requires event_id")
+    year = args.year if args.year is not None else datetime.now(timezone.utc).year
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -77,22 +90,23 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("fastf1").propagate = False
 
     outcomes: Counter[str] = Counter()
-    for event_id, identifier in _sessions(args.year, args.event_id, args.identifier):
+    for event_id, identifier in _sessions(year, args.event_id, args.identifier):
         try:
             outcome = export_session(
                 archive,
-                args.year,
+                year,
                 event_id,
                 identifier,
                 force=args.force,
                 overwrite=args.overwrite,
                 allow_incomplete=args.allow_incomplete,
+                allow_incomplete_when_final=args.allow_incomplete_when_final,
             )
         except IncompleteLoadError as exc:
-            logger.error("Not exporting %s %s %s: %s", args.year, event_id, identifier, exc)
-            outcomes["failed"] += 1
+            logger.error("Not exporting %s %s %s: %s", year, event_id, identifier, exc)
+            outcomes["incomplete"] += 1
         except Exception:
-            logger.exception("Failed to export %s %s %s", args.year, event_id, identifier)
+            logger.exception("Failed to export %s %s %s", year, event_id, identifier)
             outcomes["failed"] += 1
         else:
             outcomes[outcome.value] += 1

@@ -481,6 +481,7 @@ def export_session(
     force: bool = False,
     overwrite: bool = False,
     allow_incomplete: bool = False,
+    allow_incomplete_when_final: bool = False,
     now: datetime | None = None,
 ) -> ExportOutcome:
     """Load a session from FastF1 and export it, unless it isn't ready yet or
@@ -488,6 +489,9 @@ def export_session(
 
     Raises IncompleteLoadError when FastF1 fails to load part of the session,
     unless allow_incomplete is set for data that doesn't exist upstream.
+    allow_incomplete_when_final sets it only once the session's results are
+    final: data still missing by then isn't expected to appear upstream, so
+    scheduled exports stop retrying the session.
     """
     now = now or datetime.now(timezone.utc)
     session = resolve_session(year, event_id, identifier)
@@ -502,7 +506,12 @@ def export_session(
         # personal bests and quali-like results) from.
         session.load(laps=True, telemetry=True, weather=True, messages=True)
     failures = load.failures + _missing_parts(session)
-    if failures and not allow_incomplete:
-        raise IncompleteLoadError(failures)
+    if failures:
+        if not (allow_incomplete or (allow_incomplete_when_final and results_final(end, now))):
+            raise IncompleteLoadError(failures)
+        logger.warning(
+            "Exporting %s %s %s without what FastF1 failed to load: %s",
+            year, event_id, identifier, "; ".join(failures),
+        )
     export_loaded_session(archive, session, year, event_id, identifier, now=now, load_failures=failures)
     return ExportOutcome.EXPORTED
