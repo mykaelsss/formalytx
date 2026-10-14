@@ -7,7 +7,7 @@ from app.archive import reader
 from app.archive.models import StoredLap, StoredSession
 from app.utils import format_lap_time, format_seconds, resolve_event, resolve_session
 
-from app.fastf1_loader import cached_locked_load
+from app.fastf1_loader import locked_load
 
 PRACTICE_SESSION_NAMES = {"Practice 1", "Practice 2", "Practice 3", "Practice 4"}
 # Identifiers whose laps are split into Q1-Q3 segments.
@@ -67,7 +67,7 @@ def get_session(year: int, event_id: str, identifier: str):
         return _session_info_from_archive(stored)
     event = resolve_event(year, event_id)
     session = resolve_session(year, event_id, identifier)
-    session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=True)
+    locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=True)
     
     is_practice = session.name in PRACTICE_SESSION_NAMES
     
@@ -161,7 +161,7 @@ def get_driver_laps(year: int, event_id: str, identifier: str, drivers: str):
     if stored is not None:
         return _driver_laps_from_archive(stored, abbreviations)
     session = resolve_session(year, event_id, identifier)
-    session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
+    locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
     driver_laps = session.laps.pick_drivers(abbreviations)
     grouped = driver_laps.groupby("Driver")
     result = []
@@ -359,7 +359,7 @@ def get_lap_telemetry(year: int, event_id: str, identifier: str, selected_laps: 
     if stored is not None:
         return _lap_telemetry_from_archive(stored, selections)
     session = resolve_session(year, event_id, identifier)
-    session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
+    locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
     result = []
     for driver, lap_numbers in selections:
         for lap_number in lap_numbers:

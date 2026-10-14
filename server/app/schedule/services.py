@@ -13,7 +13,7 @@ from app.archive import reader
 from app.archive.models import StoredDriver, StoredSession, StoredWeather
 from app.utils import ExpiringLRU, KeyLockRegistry, format_lap_time, format_seconds, resolve_event, resolve_session
 
-from app.fastf1_loader import cached_locked_load
+from app.fastf1_loader import locked_load
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -164,13 +164,13 @@ def get_results(year: int, event_id: str, identifier: str):
         return _results_from_archive(stored, uid)
     session = resolve_session(year, event_id, identifier)
     if uid in PRACTICE_IDENTIFIERS:
-        session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
+        locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
         return _practice_results(session)
     elif uid in QUALIFYING_IDENTIFIERS:
-        session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
+        locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
         return _qualifying_results(session)
     else:
-        session = cached_locked_load(session, year, event_id, identifier, laps=False, telemetry=False, weather=False, messages=False)
+        locked_load(session, year, event_id, identifier, laps=False, telemetry=False, weather=False, messages=False)
         return _race_results(session)
 
 
@@ -313,7 +313,7 @@ def get_podium(year: int, event_id: str):
     if stored is not None:
         return _podium_from_archive(stored)
     session = resolve_session(year, event_id, 'R')
-    session = cached_locked_load(session, year, event_id, 'R', telemetry=False, weather=False, messages=False)
+    locked_load(session, year, event_id, 'R', telemetry=False, weather=False, messages=False)
     results = session.results
 
     # Normalise Position to numeric — older years may have strings or floats
@@ -385,7 +385,7 @@ def _build_event_circuit_info(year: int, event_id: str) -> dict:
         identifiers = [identifier for identifier in identifiers if archived[identifier] is None]
     for identifier in identifiers:
         session = resolve_session(year, event_id, identifier)
-        session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
+        locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
         try:
             return build_circuit_info(session)
         except NoCircuitLayout:
@@ -612,7 +612,7 @@ def _session_data_from_archive(stored: StoredSession, config: SessionDetailConfi
 def _get_session_data(year: int, event_id: str, identifier: str, config: SessionDetailConfig):
     try:
         session = resolve_session(year, event_id, identifier)
-        session = cached_locked_load(session, year, event_id, identifier, laps=config.laps, telemetry=False, messages=False, weather=config.weather)
+        locked_load(session, year, event_id, identifier, laps=config.laps, telemetry=False, messages=False, weather=config.weather)
 
         weather = None
         w = session.weather_data if config.weather else None

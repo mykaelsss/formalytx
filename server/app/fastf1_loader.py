@@ -1,28 +1,16 @@
-import collections
 import logging
 import os
 import shutil
 import threading
-import time
 import uuid
 
 import fastf1
 from app.utils import KeyLockRegistry
-from fastf1.core import Session
 from requests.adapters import HTTPAdapter
 
 logger = logging.getLogger("uvicorn.error")
 
-# Loaded sessions are only kept for the FastF1 fallback (sessions not in the
-# archive yet), and each one holds a few hundred MB, so keep few and drop idle
-# ones. configure_session_cache() sets these from settings at startup.
-_SESSION_CACHE_MAX = 2
-_SESSION_IDLE_SECONDS = 30 * 60
-# key -> (session, loaded flags, last used, monotonic)
-_session_cache: "collections.OrderedDict[tuple, tuple]" = collections.OrderedDict()
-_session_cache_guard = threading.Lock()
 _session_locks = KeyLockRegistry()
-
 
 _active_cache_dir: str | None = None
 _prune_wake: threading.Event | None = None
@@ -85,63 +73,22 @@ def _touch(path: str) -> None:
         pass
 
 
-def configure_session_cache(max_size: int, idle_seconds: float) -> None:
-    global _SESSION_CACHE_MAX, _SESSION_IDLE_SECONDS
-    _SESSION_CACHE_MAX = max_size
-    _SESSION_IDLE_SECONDS = idle_seconds
+def locked_load(session, year: int, event_id: str, identifier, **load_kwargs) -> None:
+    """Load a Session under a per-key lock keyed by (year, event_id, identifier).
 
-
-def evict_idle_sessions(now: float | None = None) -> None:
-    """Drop loaded sessions nobody has used for _SESSION_IDLE_SECONDS."""
-    now = time.monotonic() if now is None else now
-    with _session_cache_guard:
-        idle = [key for key, (_s, _l, used) in _session_cache.items() if now - used >= _SESSION_IDLE_SECONDS]
-        for key in idle:
-            del _session_cache[key]
-    for key in idle:
-        logger.info("Dropped idle loaded session %s", key)
-
-
-def cached_locked_load(session, year: int, event_id: str, identifier, **load_kwargs) -> Session:
-    """Load a Session under a per-key lock and pin it in process memory keyed by
-    (year, event_id, identifier). Subsequent requests for the same key reuse the
-    already-loaded Session instead of rebuilding DataFrames via session.load().
-    Concurrent loads of the *same* session serialize on the per-key lock; loads
-    of *different* sessions run in parallel.
-
-    Returns the Session to use — may differ from the passed-in `session` when a
-    cached instance is reused. Callers must consume the return value.
-
-    If the cached Session is missing data the new request needs, those flags are
-    loaded incrementally on the cached instance.
+    Loaded sessions aren't kept: they're only needed for sessions not in the
+    archive yet, and each holds a few hundred MB. The lock makes concurrent
+    loads of the same session wait for the first, which fills FastF1's disk
+    cache, instead of all fetching it upstream and holding it in memory at
+    once. Loads of different sessions run in parallel.
     """
-    evict_idle_sessions()
     key = (year, event_id, str(identifier).upper())
-    requested = frozenset(k for k, v in load_kwargs.items() if v)
     with _session_locks.get(key):
-        with _session_cache_guard:
-            entry = _session_cache.get(key)
-        if entry is not None:
-            session, loaded, _used = entry
-            missing = requested - loaded
-            if missing:
-                inc = {k: (k in missing) for k in load_kwargs}
-                session.load(**inc)
-                loaded = loaded | missing
-        else:
-            session.load(**load_kwargs)
-            loaded = requested
-        with _session_cache_guard:
-            _session_cache[key] = (session, loaded, time.monotonic())
-            _session_cache.move_to_end(key)
-            while len(_session_cache) > _SESSION_CACHE_MAX:
-                _session_cache.popitem(last=False)
+        session.load(**load_kwargs)
     leaf = _session_cache_dir(session)
     if leaf and os.path.isdir(leaf):
         _touch(leaf)
     _maybe_wake_pruner()
-    return session
-
 
 
 def _disk_used_fraction(cache_dir: str) -> float | None:
@@ -261,10 +208,6 @@ def start_pruner(cache_dir: str, high_water: float, low_water: float, interval: 
 
     def _run():
         while not stop.is_set():
-            try:
-                evict_idle_sessions()
-            except Exception:
-                logger.exception("Evicting idle sessions failed")
             try:
                 prune_cache(cache_dir, high_water, low_water)
             except Exception:

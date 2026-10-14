@@ -26,7 +26,7 @@ from app.archive import reader
 from app.archive.archive import open_archive
 from app.archive.reader import ArchiveReader, ArchiveUnavailable
 from app.etag import ETagMiddleware
-from app.fastf1_loader import configure_session_cache, install_request_timeouts, set_cache_dir, start_pruner
+from app.fastf1_loader import install_request_timeouts, set_cache_dir, start_pruner
 from app.sessions.routes import router as session_router
 from app.schedule.routes import router as schedule_router
 from app.schedule.services import CircuitInfoUnavailable
@@ -55,7 +55,6 @@ async def lifespan(app: FastAPI):
         settings.upstream_read_timeout_seconds,
     )
     set_cache_dir(settings.fastf1_cache_dir)
-    configure_session_cache(settings.session_cache_size, settings.session_cache_idle_seconds)
     archive = open_archive(settings)
     reader.configure(ArchiveReader(archive) if archive is not None else None)
     if archive is None:

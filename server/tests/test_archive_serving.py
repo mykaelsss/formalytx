@@ -232,9 +232,8 @@ def live_circuits(monkeypatch):
 
     def _load(session, year, event_id, identifier, **kwargs):
         loaded.append(identifier)
-        return identifier
 
-    monkeypatch.setattr(schedule, "cached_locked_load", _load)
+    monkeypatch.setattr(schedule, "locked_load", _load)
     built = {}
 
     def _build(identifier):

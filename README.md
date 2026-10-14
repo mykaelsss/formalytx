@@ -36,7 +36,7 @@ f1_telemetry/
     │   ├── main.py            # App entry, middleware, error handlers
     │   ├── config.py          # Settings (env vars via pydantic-settings)
     │   ├── caching.py         # HTTP Cache-Control header policy
-    │   ├── fastf1_loader.py   # FastF1 fallback: small Session cache + per-key load locks
+    │   ├── fastf1_loader.py   # FastF1 fallback: per-key load locks, disk cache pruning
     │   ├── archive/           # Session archive on R2: models, export command, reader
     │   ├── sessions/          # Session info, driver laps, telemetry
     │   │   ├── routes.py
@@ -95,9 +95,9 @@ Why: FastF1 assigns `RoundNumber = 0` to every testing event in a season, so rou
 - Request → route → service → the archive, through `app/archive/reader.py`.
   Each request reads only the objects it needs: the session summary, then one object per driver for laps or one per lap for telemetry, fetched in parallel.
 - Sessions that aren't archived yet (live, just finished, or missing from the archive) fall back to FastF1 through `resolve_session` (in `app/utils.py`).
-- FastF1 sessions are loaded via `cached_locked_load` in `app/fastf1_loader.py`.
-  A per-key lock (via `KeyLockRegistry` in `app/utils.py`) serializes concurrent loads of the same session.
-  The loaded `Session` is kept in process memory, but only a few of them and only while they're used, since each holds a few hundred MB.
+- FastF1 sessions are loaded via `locked_load` in `app/fastf1_loader.py`.
+  A per-key lock (via `KeyLockRegistry` in `app/utils.py`) serializes concurrent loads of the same session, so only the first fetches it upstream.
+  Loaded sessions aren't kept in memory, since each holds a few hundred MB: each request loads its session again from FastF1's on-disk cache.
 - An event the archive has no circuit info for builds it through FastF1 from the first finished session that isn't archived and can, as the export does.
   Events without any, such as at a circuit FastF1 has no layout for, get a 404.
 - If the archive can't be read, requests fail with a 503 and a `Retry-After` header rather than falling back to FastF1, which would load every session into memory at once.
@@ -129,12 +129,10 @@ They're process-local: with several uvicorn workers, each has its own.
 | Archived session summaries | `app/archive/reader.py` | `(year, event_id, identifier)` | 256 |
 | Archived circuits | `app/archive/reader.py` | `(year, event_id)` | 128 |
 | Circuits built through FastF1 | `app/schedule/services.py` | `(year, event_id)` | 64 |
-| Loaded FastF1 `Session` objects | `app/fastf1_loader.py` | `(year, event_id, identifier)` | `SESSION_CACHE_SIZE` (2) |
 
 Every archive request needs its session summary, so those are cached; summaries whose results aren't final yet are re-read after 10 minutes.
 Laps and telemetry are read from the archive on each request.
 Circuits built through FastF1 are kept, and events without one are re-checked after 10 minutes.
-Loaded FastF1 sessions are dropped after `SESSION_CACHE_IDLE_SECONDS` (30 minutes) without use.
 
 ---
 
