@@ -6,6 +6,5 @@ export function useEventSchedule(year: string, event: string) {
     queryKey: ["eventSchedule", year, event],
     queryFn: () => fetchEventSchedule(year, event),
     enabled: !!year && !!event,
-    placeholderData: (previousData) => previousData,
   });
 }

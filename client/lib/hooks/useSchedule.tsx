@@ -6,6 +6,5 @@ export function useSchedule(year: string) {
     queryKey: ["schedule", year],
     queryFn: () => fetchSchedule(year),
     enabled: !!year,
-    placeholderData: (previousData) => previousData,
   });
 }
