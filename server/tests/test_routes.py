@@ -12,7 +12,7 @@ from fastf1.exceptions import (
 
 from app.archive.reader import ArchiveUnavailable
 from app.main import app
-from app.schedule.services import SessionDetailConfig
+from app.schedule.services import CircuitInfoUnavailable, NoCircuitLayout, SessionDetailConfig
 from app.utils import LockWaitTimeout
 
 
@@ -462,6 +462,8 @@ def test_year_must_be_an_integer(client):
         (InvalidSessionError("no such session"), 404),
         (NoLapDataError("no laps"), 404),
         (DataNotLoadedError("not loaded"), 404),
+        (CircuitInfoUnavailable("no circuit info"), 404),
+        (NoCircuitLayout("no layout"), 404),
         (FastF1CriticalError("upstream exploded"), 502),
         (ErgastError("ergast down"), 502),
         (RateLimitExceededError("slow down"), 503),

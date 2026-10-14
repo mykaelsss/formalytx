@@ -29,6 +29,7 @@ from app.etag import ETagMiddleware
 from app.fastf1_loader import configure_session_cache, install_request_timeouts, set_cache_dir, start_pruner
 from app.sessions.routes import router as session_router
 from app.schedule.routes import router as schedule_router
+from app.schedule.services import CircuitInfoUnavailable
 from app.utils import LockWaitTimeout
 
 logger = logging.getLogger("uvicorn.error")
@@ -85,7 +86,8 @@ def _error(status: int, detail: str, headers: dict | None = None) -> JSONRespons
 
 
 async def _not_found(request: Request, exc: Exception) -> JSONResponse:
-    # Invalid year/round/session or a session the API has no usable data for.
+    # Invalid year/round/session, a session the API has no usable data for, or
+    # an event without circuit info.
     logger.info("404 for %s: %s", request.url.path, exc)
     return _error(404, str(exc) or "The requested session data is not available.")
 
@@ -131,7 +133,7 @@ async def _archive_unavailable(request: Request, exc: Exception) -> JSONResponse
     )
 
 
-for _exc in (ValueError, InvalidSessionError, NoLapDataError, SessionNotAvailableError, DataNotLoadedError):
+for _exc in (ValueError, InvalidSessionError, NoLapDataError, SessionNotAvailableError, DataNotLoadedError, CircuitInfoUnavailable):
     app.add_exception_handler(_exc, _not_found)
 app.add_exception_handler(RateLimitExceededError, _rate_limited)
 app.add_exception_handler(FastF1CriticalError, _upstream_error)

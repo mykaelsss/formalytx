@@ -14,8 +14,9 @@ from app.archive.models import (
 )
 from app.archive.reader import ArchiveReader
 from app.archive.store import LocalBlobStore
+from app.utils import ExpiringLRU
 from app.schedule import services as schedule
-from app.schedule.services import SessionDetailConfig
+from app.schedule.services import CircuitInfoUnavailable, NoCircuitLayout, SessionDetailConfig
 from app.sessions import services as sessions
 from tests.test_archive import _lap, _session, _telemetry
 
@@ -215,6 +216,73 @@ def test_circuit_info(archive, no_fastf1):
         "marshal_sectors": [],
         "sector_distances": [1000.0, 2500.0],
     }
+
+
+@pytest.fixture
+def live_circuits(monkeypatch):
+    """The event's sessions, each loading as itself through a fake FastF1, and
+    building circuit info per `built`: a dict, or an exception to raise."""
+    monkeypatch.setattr(schedule, "_live_circuits", ExpiringLRU(8))
+    sessions = {"FP1": "completed", "FP2": "completed", "FP3": "completed", "Q": "upcoming"}
+    monkeypatch.setattr(schedule, "get_event", lambda year, event_id: {
+        "sessions": [{"identifier": i, "status": status} for i, status in sessions.items()]
+    })
+    loaded = []
+    monkeypatch.setattr(schedule, "resolve_session", lambda year, event_id, identifier: identifier)
+
+    def _load(session, year, event_id, identifier, **kwargs):
+        loaded.append(identifier)
+        return identifier
+
+    monkeypatch.setattr(schedule, "cached_locked_load", _load)
+    built = {}
+
+    def _build(identifier):
+        result = built.get(identifier, CircuitInfoUnavailable(f"no telemetry in {identifier}"))
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(schedule, "build_circuit_info", _build)
+    return built, loaded
+
+
+def test_circuit_info_falls_back_to_the_first_session_that_builds_it(live_circuits):
+    built, loaded = live_circuits
+    built.update(FP2={"from": "FP2"}, FP3={"from": "FP3"})
+    assert schedule.get_circuit_info(2026, "r14") == {"from": "FP2"}
+    assert schedule.get_circuit_info(2026, "r14") == {"from": "FP2"}
+    assert loaded == ["FP1", "FP2"]
+
+
+def test_circuit_info_skips_archived_sessions(archive, live_circuits):
+    built, loaded = live_circuits
+    built.update(FP1={"from": "FP1"}, FP3={"from": "FP3"})
+    archive.put_session(_session(event_id="r14", identifier="FP1", name="Practice 1"))
+    archive.put_session(_session(event_id="r14", identifier="FP2", name="Practice 2"))
+    assert schedule.get_circuit_info(2025, "r14") == {"from": "FP3"}
+    assert loaded == ["FP3"]
+
+
+def test_circuit_info_unavailable_is_remembered_for_a_while(live_circuits, monkeypatch):
+    built, loaded = live_circuits
+    now = [1000.0]
+    monkeypatch.setattr("app.utils.time.monotonic", lambda: now[0])
+    for _ in range(2):
+        with pytest.raises(CircuitInfoUnavailable, match="No finished session of 2026 r14"):
+            schedule.get_circuit_info(2026, "r14")
+    assert loaded == ["FP1", "FP2", "FP3"]
+    built["FP1"] = {"from": "FP1"}
+    now[0] += schedule._CIRCUIT_FAILURE_TTL_SECONDS
+    assert schedule.get_circuit_info(2026, "r14") == {"from": "FP1"}
+
+
+def test_circuit_info_stops_without_a_layout(live_circuits):
+    built, loaded = live_circuits
+    built.update(FP1=NoCircuitLayout("FastF1 has no layout of Madring"), FP2={"from": "FP2"})
+    with pytest.raises(NoCircuitLayout, match="Madring"):
+        schedule.get_circuit_info(2026, "r14")
+    assert loaded == ["FP1"]
 
 
 def test_session_weather_and_fastest_lap():

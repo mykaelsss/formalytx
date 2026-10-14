@@ -11,7 +11,7 @@ from fastf1.mvapi import get_circuit_info as get_mv_circuit_info
 from dataclasses import dataclass
 from app.archive import reader
 from app.archive.models import StoredDriver, StoredSession, StoredWeather
-from app.utils import format_lap_time, format_seconds, resolve_event, resolve_session
+from app.utils import ExpiringLRU, KeyLockRegistry, format_lap_time, format_seconds, resolve_event, resolve_session
 
 from app.fastf1_loader import cached_locked_load
 
@@ -347,15 +347,53 @@ def get_podium(year: int, event_id: str):
     return podium
 
 
+# Circuit info built through FastF1 for events the archive has none for, or
+# why it couldn't be, so repeat requests don't load sessions again. Failures
+# expire, since a finished session's data can still arrive upstream.
+_CIRCUIT_FAILURE_TTL_SECONDS = 600
+_live_circuits = ExpiringLRU(64)
+_live_circuit_locks = KeyLockRegistry()
+
 def get_circuit_info(year: int, event_id: str):
+    """Raises CircuitInfoUnavailable when the event has none."""
     archive = reader.current()
     circuit = archive.circuit(year, event_id) if archive is not None else None
     if circuit is not None:
         return circuit.model_dump(exclude={"format_version"})
-    identifier = 1
-    session = resolve_session(year, event_id, identifier)
-    session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
-    return build_circuit_info(session)
+    key = (year, event_id.lower())
+    with _live_circuit_locks.get(key):
+        result = _live_circuits.get(key)
+        if result is None:
+            try:
+                result = _build_event_circuit_info(year, event_id)
+                _live_circuits.put(key, result)
+            except CircuitInfoUnavailable as exc:
+                result = exc
+                _live_circuits.put(key, exc, ttl=_CIRCUIT_FAILURE_TTL_SECONDS)
+    if isinstance(result, CircuitInfoUnavailable):
+        # A new exception each time, since concurrent requests raise it.
+        raise type(result)(*result.args)
+    return result
+
+def _build_event_circuit_info(year: int, event_id: str) -> dict:
+    """Circuit info from the first finished session that builds it, as the
+    export does. Archived sessions are skipped: exporting them already tried."""
+    identifiers = [s["identifier"] for s in get_event(year, event_id)["sessions"] if s["status"] == "completed"]
+    archive = reader.current()
+    if archive is not None:
+        archived = archive.sessions(year, event_id, identifiers)
+        identifiers = [identifier for identifier in identifiers if archived[identifier] is None]
+    for identifier in identifiers:
+        session = resolve_session(year, event_id, identifier)
+        session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
+        try:
+            return build_circuit_info(session)
+        except NoCircuitLayout:
+            raise
+        except (CircuitInfoUnavailable, DataNotLoadedError) as exc:
+            # DataNotLoadedError: FastF1 loaded nothing of the session at all.
+            logger.info("No circuit info for %s %s from %s: %s", year, event_id, identifier, exc)
+    raise CircuitInfoUnavailable(f"No finished session of {year} {event_id} has circuit info")
 
 class CircuitInfoUnavailable(Exception):
     """The session has nothing to build the circuit info from."""

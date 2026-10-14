@@ -98,6 +98,8 @@ Why: FastF1 assigns `RoundNumber = 0` to every testing event in a season, so rou
 - FastF1 sessions are loaded via `cached_locked_load` in `app/fastf1_loader.py`.
   A per-key lock (via `KeyLockRegistry` in `app/utils.py`) serializes concurrent loads of the same session.
   The loaded `Session` is kept in process memory, but only a few of them and only while they're used, since each holds a few hundred MB.
+- An event the archive has no circuit info for builds it through FastF1 from the first finished session that isn't archived and can, as the export does.
+  Events without any, such as at a circuit FastF1 has no layout for, get a 404.
 - If the archive can't be read, requests fail with a 503 and a `Retry-After` header rather than falling back to FastF1, which would load every session into memory at once.
 - FastF1's on-disk cache lives in `server/cache/` (mounted as a volume in Docker Compose).
 
@@ -126,10 +128,12 @@ They're process-local: with several uvicorn workers, each has its own.
 |---|---|---|---|
 | Archived session summaries | `app/archive/reader.py` | `(year, event_id, identifier)` | 256 |
 | Archived circuits | `app/archive/reader.py` | `(year, event_id)` | 128 |
+| Circuits built through FastF1 | `app/schedule/services.py` | `(year, event_id)` | 64 |
 | Loaded FastF1 `Session` objects | `app/fastf1_loader.py` | `(year, event_id, identifier)` | `SESSION_CACHE_SIZE` (2) |
 
 Every archive request needs its session summary, so those are cached; summaries whose results aren't final yet are re-read after 10 minutes.
 Laps and telemetry are read from the archive on each request.
+Circuits built through FastF1 are kept, and events without one are re-checked after 10 minutes.
 Loaded FastF1 sessions are dropped after `SESSION_CACHE_IDLE_SECONDS` (30 minutes) without use.
 
 ---

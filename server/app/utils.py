@@ -1,4 +1,6 @@
+import collections
 import threading
+import time
 import weakref
 
 import fastf1
@@ -56,6 +58,34 @@ class KeyLockRegistry:
                 lock = _KeyLock(key, self._timeout)
                 self._locks[key] = lock
             return lock
+
+
+class ExpiringLRU:
+    """Thread-safe LRU whose entries can expire."""
+
+    def __init__(self, max_size: int):
+        self._entries: "collections.OrderedDict[tuple, tuple[object, float | None]]" = collections.OrderedDict()
+        self._max_size = max_size
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple):
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            value, expires_at = entry
+            if expires_at is not None and time.monotonic() >= expires_at:
+                del self._entries[key]
+                return None
+            self._entries.move_to_end(key)
+            return value
+
+    def put(self, key: tuple, value, ttl: float | None = None) -> None:
+        with self._lock:
+            self._entries[key] = (value, None if ttl is None else time.monotonic() + ttl)
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_size:
+                self._entries.popitem(last=False)
 
 
 def parse_event_id(event_id: str) -> tuple[Literal["test", "race"], int]:

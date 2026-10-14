@@ -5,7 +5,7 @@ from botocore.exceptions import EndpointConnectionError
 
 from app.archive.archive import SessionArchive
 from app.archive.models import StoredCircuit, StoredDriverLaps
-from app.archive.reader import ArchiveReader, ArchiveUnavailable, _LRU
+from app.archive.reader import ArchiveReader, ArchiveUnavailable
 from app.archive.store import LocalBlobStore
 from tests.test_archive import _lap, _session, _telemetry
 
@@ -38,28 +38,6 @@ def _circuit() -> StoredCircuit:
     return StoredCircuit(rotation=90.0, corners=[], marshal_sectors=[], sector_distances=[1000.0, 2000.0])
 
 
-def test_lru_evicts_least_recently_used():
-    lru = _LRU(2)
-    lru.put(("a",), 1)
-    lru.put(("b",), 2)
-    lru.get(("a",))
-    lru.put(("c",), 3)
-    assert lru.get(("a",)) == 1
-    assert lru.get(("b",)) is None
-    assert lru.get(("c",)) == 3
-
-
-def test_lru_entries_expire(monkeypatch):
-    now = [1000.0]
-    monkeypatch.setattr("app.archive.reader.time.monotonic", lambda: now[0])
-    lru = _LRU(2)
-    lru.put(("a",), 1, ttl=60)
-    lru.put(("b",), 2)
-    now[0] += 60
-    assert lru.get(("a",)) is None
-    assert lru.get(("b",)) == 2
-
-
 def test_session_is_cached(archive, reader):
     archive.put_session(_session())
     first = reader.session(2025, "r16", "R")
@@ -76,7 +54,7 @@ def test_missing_session_is_not_cached(archive, reader):
 
 def test_unsettled_session_is_read_again_later(archive, monkeypatch):
     now = [1000.0]
-    monkeypatch.setattr("app.archive.reader.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("app.utils.time.monotonic", lambda: now[0])
     reader = ArchiveReader(archive, unsettled_ttl_seconds=600)
     archive.put_session(_session(results_final=False))
     assert not reader.session(2025, "r16", "R").results_final
@@ -90,7 +68,7 @@ def test_unsettled_session_is_read_again_later(archive, monkeypatch):
 
 def test_final_session_does_not_expire(archive, monkeypatch):
     now = [1000.0]
-    monkeypatch.setattr("app.archive.reader.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("app.utils.time.monotonic", lambda: now[0])
     reader = ArchiveReader(archive, unsettled_ttl_seconds=600)
     archive.put_session(_session())
     reader.session(2025, "r16", "R")

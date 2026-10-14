@@ -7,10 +7,7 @@ while, to pick up the final export. Laps and telemetry objects aren't cached
 here: each is read once per request and Cloudflare caches the responses.
 """
 
-import collections
 import logging
-import threading
-import time
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from typing import TypeVar
@@ -19,6 +16,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from app.archive.archive import SessionArchive
 from app.archive.models import StoredCircuit, StoredDriverLaps, StoredLapTelemetry, StoredSession
+from app.utils import ExpiringLRU
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -28,34 +26,6 @@ _K = TypeVar("_K")
 
 class ArchiveUnavailable(Exception):
     """The archive couldn't be read, e.g. R2 is down or unreachable."""
-
-
-class _LRU:
-    """Thread-safe LRU whose entries can expire."""
-
-    def __init__(self, max_size: int):
-        self._entries: "collections.OrderedDict[tuple, tuple[object, float | None]]" = collections.OrderedDict()
-        self._max_size = max_size
-        self._lock = threading.Lock()
-
-    def get(self, key: tuple):
-        with self._lock:
-            entry = self._entries.get(key)
-            if entry is None:
-                return None
-            value, expires_at = entry
-            if expires_at is not None and time.monotonic() >= expires_at:
-                del self._entries[key]
-                return None
-            self._entries.move_to_end(key)
-            return value
-
-    def put(self, key: tuple, value, ttl: float | None = None) -> None:
-        with self._lock:
-            self._entries[key] = (value, None if ttl is None else time.monotonic() + ttl)
-            self._entries.move_to_end(key)
-            while len(self._entries) > self._max_size:
-                self._entries.popitem(last=False)
 
 
 class ArchiveReader:
@@ -69,8 +39,8 @@ class ArchiveReader:
         workers: int = 32,
     ):
         self._archive = archive
-        self._sessions = _LRU(session_cache_size)
-        self._circuits = _LRU(circuit_cache_size)
+        self._sessions = ExpiringLRU(session_cache_size)
+        self._circuits = ExpiringLRU(circuit_cache_size)
         self._unsettled_ttl = unsettled_ttl_seconds
         self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="archive-read")
 
