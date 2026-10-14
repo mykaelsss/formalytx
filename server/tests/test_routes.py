@@ -10,8 +10,9 @@ from fastf1.exceptions import (
     RateLimitExceededError,
 )
 
+from app.archive.reader import ArchiveUnavailable
 from app.main import app
-from app.schedule.services import SessionDetailConfig
+from app.schedule.services import CircuitInfoUnavailable, NoCircuitLayout, SessionDetailConfig
 from app.utils import LockWaitTimeout
 
 
@@ -461,6 +462,8 @@ def test_year_must_be_an_integer(client):
         (InvalidSessionError("no such session"), 404),
         (NoLapDataError("no laps"), 404),
         (DataNotLoadedError("not loaded"), 404),
+        (CircuitInfoUnavailable("no circuit info"), 404),
+        (NoCircuitLayout("no layout"), 404),
         (FastF1CriticalError("upstream exploded"), 502),
         (ErgastError("ergast down"), 502),
         (RateLimitExceededError("slow down"), 503),
@@ -468,6 +471,7 @@ def test_year_must_be_an_integer(client):
         (requests.ConnectTimeout("no connection"), 504),
         (requests.ConnectionError("refused"), 502),
         (LockWaitTimeout("still loading"), 503),
+        (ArchiveUnavailable("r2 down"), 503),
     ],
     ids=lambda v: type(v).__name__ if isinstance(v, Exception) else str(v),
 )
@@ -498,6 +502,18 @@ def test_rate_limit_beats_critical_error_handler(client, cache_calls, monkeypatc
 def test_lock_wait_timeout_asks_client_to_retry(client, cache_calls, monkeypatch):
     def _raise(*a, **kw):
         raise LockWaitTimeout("still loading")
+
+    monkeypatch.setattr("app.sessions.routes.get_session", _raise)
+
+    resp = client.get("/sessions/2024/r5/R")
+
+    assert resp.status_code == 503
+    assert resp.headers["Retry-After"] == "30"
+
+
+def test_archive_unavailable_asks_client_to_retry(client, cache_calls, monkeypatch):
+    def _raise(*a, **kw):
+        raise ArchiveUnavailable("r2 down")
 
     monkeypatch.setattr("app.sessions.routes.get_session", _raise)
 

@@ -1,20 +1,24 @@
-import collections
+import itertools
 import logging
 
 import fastf1
+import numpy as np
 import pandas as pd
 from datetime import datetime, timezone, timedelta
-from fastf1.core import Session
+from fastf1.core import Lap, Session
+from fastf1.exceptions import DataNotLoadedError
+from fastf1.mvapi import get_circuit_info as get_mv_circuit_info
 from dataclasses import dataclass
-from app.utils import KeyLockRegistry, format_lap_time, resolve_event, resolve_session
+from app.archive import reader
+from app.archive.models import StoredDriver, StoredSession, StoredWeather
+from app.utils import ExpiringLRU, KeyLockRegistry, format_lap_time, format_seconds, resolve_event, resolve_session
 
-from app.fastf1_loader import cached_locked_load
+from app.fastf1_loader import locked_load
 
 logger = logging.getLogger("uvicorn.error")
 
-_CIRCUIT_CACHE_MAX = 64
-_circuit_cache: "collections.OrderedDict[tuple, dict]" = collections.OrderedDict()
-_circuit_locks = KeyLockRegistry()
+PRACTICE_IDENTIFIERS = {"FP1", "FP2", "FP3"}
+QUALIFYING_IDENTIFIERS = {"Q", "SQ"}
 
 @dataclass
 class SessionDetailConfig:
@@ -70,17 +74,103 @@ def get_schedule(year: int):
 
     return {"year": year, "events": events}
 
+def _format_race_time(secs: float, position: int) -> str:
+    """The winner's total time, or everyone else's gap to the winner."""
+    if position == 1:
+        h = int(secs // 3600)
+        m = int((secs % 3600) // 60)
+        s = secs % 60
+        return f"{h}:{m:02d}:{s:06.3f}"
+    return f"+{secs:.3f}s"
+
+
+def _format_practice_time(secs: float, leader_secs: float, position: int) -> str:
+    """The leader's lap time, or everyone else's gap to it."""
+    if position == 1:
+        m = int(secs // 60)
+        s = secs % 60
+        return f"{m}:{s:06.3f}"
+    # Lap times are whole milliseconds; subtract those to avoid float error.
+    gap = (round(secs * 1000) - round(leader_secs * 1000)) / 1000
+    return f"+{gap:.3f}s"
+
+
+def _archived_session(year: int, event_id: str, identifier: str) -> StoredSession | None:
+    archive = reader.current()
+    return archive.session(year, event_id, identifier) if archive is not None else None
+
+
+def _result_row(driver: StoredDriver, position: int, **fields) -> dict:
+    row = {
+        "position": position,
+        "code": driver.abbreviation or "",
+        "full_name": driver.full_name or "",
+        "team": driver.team_name or "",
+        "team_color": driver.team_color or "",
+        "grid": None, "laps": None, "time": None,
+        "q1": None, "q2": None, "q3": None,
+        "status": None, "points": 0.0,
+    }
+    row.update(fields)
+    return row
+
+
+def _by_position(stored: StoredSession) -> list[StoredDriver]:
+    return sorted((d for d in stored.drivers if d.position is not None), key=lambda d: d.position)
+
+
+def _by_best_lap(stored: StoredSession) -> list[StoredDriver]:
+    return sorted((d for d in stored.drivers if d.best_lap_time is not None), key=lambda d: d.best_lap_time)
+
+
+def _results_from_archive(stored: StoredSession, uid: str) -> list[dict]:
+    if uid in PRACTICE_IDENTIFIERS:
+        fastest = _by_best_lap(stored)
+        return [
+            _result_row(d, pos, time=_format_practice_time(d.best_lap_time, fastest[0].best_lap_time, pos))
+            for pos, d in enumerate(fastest, start=1)
+        ]
+    if uid in QUALIFYING_IDENTIFIERS:
+        ranked = _by_position(stored)
+        if not ranked:
+            return [
+                _result_row(d, pos, q1=format_seconds(d.best_lap_time))
+                for pos, d in enumerate(_by_best_lap(stored), start=1)
+            ]
+        return [
+            _result_row(
+                d, d.position, q1=format_seconds(d.q1), q2=format_seconds(d.q2), q3=format_seconds(d.q3)
+            )
+            for d in ranked
+        ]
+    return [
+        _result_row(
+            d,
+            d.position,
+            grid=d.grid_position,
+            laps=d.laps,
+            time=None if d.time is None else _format_race_time(d.time, d.position),
+            status=d.status or "",
+            points=d.points or 0.0,
+        )
+        for d in _by_position(stored)
+    ]
+
+
 def get_results(year: int, event_id: str, identifier: str):
-    session = resolve_session(year, event_id, identifier)
     uid = identifier.upper()
-    if uid in {"FP1", "FP2", "FP3"}:
-        session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
+    stored = _archived_session(year, event_id, identifier)
+    if stored is not None:
+        return _results_from_archive(stored, uid)
+    session = resolve_session(year, event_id, identifier)
+    if uid in PRACTICE_IDENTIFIERS:
+        locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
         return _practice_results(session)
-    elif uid in {"Q", "SQ"}:
-        session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
+    elif uid in QUALIFYING_IDENTIFIERS:
+        locked_load(session, year, event_id, identifier, laps=True, telemetry=False, weather=False, messages=False)
         return _qualifying_results(session)
     else:
-        session = cached_locked_load(session, year, event_id, identifier, laps=False, telemetry=False, weather=False, messages=False)
+        locked_load(session, year, event_id, identifier, laps=False, telemetry=False, weather=False, messages=False)
         return _race_results(session)
 
 
@@ -94,14 +184,7 @@ def _race_results(session: Session):
         position = int(row['Position'])
         time_val = row.get('Time')
         if time_val is not None and not pd.isna(time_val):
-            secs = pd.Timedelta(time_val).total_seconds()
-            if position == 1:
-                h = int(secs // 3600)
-                m = int((secs % 3600) // 60)
-                s = secs % 60
-                time_str = f"{h}:{m:02d}:{s:06.3f}"
-            else:
-                time_str = f"+{secs:.3f}s"
+            time_str = _format_race_time(pd.Timedelta(time_val).total_seconds(), position)
         else:
             time_str = None
 
@@ -187,14 +270,9 @@ def _practice_results(session: Session):
         driver_num = str(row['DriverNumber'])
         info = results.loc[driver_num] if driver_num in results.index else None
         position = pos + 1
-        secs = pd.Timedelta(row['LapTime']).total_seconds()
-        if position == 1:
-            m = int(secs // 60)
-            s = secs % 60
-            time_str = f"{m}:{s:06.3f}"
-        else:
-            gap = (pd.Timedelta(row['LapTime']) - pd.Timedelta(leader_time)).total_seconds()
-            time_str = f"+{gap:.3f}s"
+        time_str = _format_practice_time(
+            pd.Timedelta(row['LapTime']).total_seconds(), pd.Timedelta(leader_time).total_seconds(), position
+        )
 
         rows.append({
             "position": position,
@@ -211,9 +289,31 @@ def _practice_results(session: Session):
         })
     return rows
 
+def _podium_code(driver: StoredDriver) -> str:
+    """Abbreviation, else the broadcast name's surname initials, else the number."""
+    if driver.abbreviation and driver.abbreviation.strip():
+        return driver.abbreviation.strip()
+    broadcast = (driver.broadcast_name or "").strip()
+    return broadcast.split()[-1][:3].upper() if broadcast else driver.number
+
+
+def _podium_from_archive(stored: StoredSession) -> list[dict]:
+    return [
+        {
+            "position": d.position,
+            "code": _podium_code(d),
+            "time": _format_race_time(d.time, d.position) if d.time is not None else d.status or "",
+        }
+        for d in _by_position(stored)[:3]
+    ]
+
+
 def get_podium(year: int, event_id: str):
+    stored = _archived_session(year, event_id, 'R')
+    if stored is not None:
+        return _podium_from_archive(stored)
     session = resolve_session(year, event_id, 'R')
-    session = cached_locked_load(session, year, event_id, 'R', telemetry=False, weather=False, messages=False)
+    locked_load(session, year, event_id, 'R', telemetry=False, weather=False, messages=False)
     results = session.results
 
     # Normalise Position to numeric — older years may have strings or floats
@@ -236,14 +336,7 @@ def get_podium(year: int, event_id: str):
         time_val = row.get('Time')
         if time_val is not None and not (isinstance(time_val, float) and pd.isna(time_val)):
             try:
-                secs = pd.Timedelta(time_val).total_seconds()
-                if position == 1:
-                    h = int(secs // 3600)
-                    m = int((secs % 3600) // 60)
-                    s = secs % 60
-                    time_str = f"{h}:{m:02d}:{s:06.3f}"
-                else:
-                    time_str = f"+{secs:.3f}s"
+                time_str = _format_race_time(pd.Timedelta(time_val).total_seconds(), position)
             except Exception:
                 time_str = str(row.get('Status', ''))
         else:
@@ -254,42 +347,137 @@ def get_podium(year: int, event_id: str):
     return podium
 
 
+# Circuit info built through FastF1 for events the archive has none for, or
+# why it couldn't be, so repeat requests don't load sessions again. Failures
+# expire, since a finished session's data can still arrive upstream.
+_CIRCUIT_FAILURE_TTL_SECONDS = 600
+_live_circuits = ExpiringLRU(64)
+_live_circuit_locks = KeyLockRegistry()
+
 def get_circuit_info(year: int, event_id: str):
-    key = (year, event_id)
-    with _circuit_locks.get(key):
-        cached = _circuit_cache.get(key)
-        if cached is not None:
-            _circuit_cache.move_to_end(key)
-            return cached
-        identifier = 1
+    """Raises CircuitInfoUnavailable when the event has none."""
+    archive = reader.current()
+    circuit = archive.circuit(year, event_id) if archive is not None else None
+    if circuit is not None:
+        return circuit.model_dump(exclude={"format_version"})
+    key = (year, event_id.lower())
+    with _live_circuit_locks.get(key):
+        result = _live_circuits.get(key)
+        if result is None:
+            try:
+                result = _build_event_circuit_info(year, event_id)
+                _live_circuits.put(key, result)
+            except CircuitInfoUnavailable as exc:
+                result = exc
+                _live_circuits.put(key, exc, ttl=_CIRCUIT_FAILURE_TTL_SECONDS)
+    if isinstance(result, CircuitInfoUnavailable):
+        # A new exception each time, since concurrent requests raise it.
+        raise type(result)(*result.args)
+    return result
+
+def _build_event_circuit_info(year: int, event_id: str) -> dict:
+    """Circuit info from the first finished session that builds it, as the
+    export does. Archived sessions are skipped: exporting them already tried."""
+    identifiers = [s["identifier"] for s in get_event(year, event_id)["sessions"] if s["status"] == "completed"]
+    archive = reader.current()
+    if archive is not None:
+        archived = archive.sessions(year, event_id, identifiers)
+        identifiers = [identifier for identifier in identifiers if archived[identifier] is None]
+    for identifier in identifiers:
         session = resolve_session(year, event_id, identifier)
-        session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
-        result = build_circuit_info(session)
-        _circuit_cache[key] = result
-        while len(_circuit_cache) > _CIRCUIT_CACHE_MAX:
-            _circuit_cache.popitem(last=False)
-        return result
+        locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
+        try:
+            return build_circuit_info(session)
+        except NoCircuitLayout:
+            raise
+        except (CircuitInfoUnavailable, DataNotLoadedError) as exc:
+            # DataNotLoadedError: FastF1 loaded nothing of the session at all.
+            logger.info("No circuit info for %s %s from %s: %s", year, event_id, identifier, exc)
+    raise CircuitInfoUnavailable(f"No finished session of {year} {event_id} has circuit info")
+
+class CircuitInfoUnavailable(Exception):
+    """The session has nothing to build the circuit info from."""
+
+class NoCircuitLayout(CircuitInfoUnavailable):
+    """FastF1 has no layout for the circuit, so no session of the event has
+    circuit info, e.g. at a circuit new to MultiViewer."""
+
+_REFERENCE_LAP_ATTEMPTS = 20
+
+def _has_telemetry(lap: Lap) -> bool:
+    """Whether the lap's merged telemetry, which placing the markers takes
+    its positions from, can be built."""
+    try:
+        if lap.get_car_data().empty or lap.get_pos_data().empty:
+            return False
+        # Merging also finds the car ahead, which fails when no other car's
+        # data overlaps the lap, as in some sparse older sessions.
+        telemetry = lap.get_telemetry(frequency="original")
+        return not telemetry[telemetry["Source"] == "pos"].empty
+    except Exception:
+        return False
+
+def _reference_lap(session: Session) -> Lap | None:
+    """The lap to place the circuit's markers and sectors along: the fastest
+    lap with car and position data.
+
+    FastF1 only tries the fastest lap, which in some older sessions has no
+    telemetry even though most other laps do.
+    """
+    try:
+        if not session.car_data or not session.pos_data:
+            return None
+        laps = session.laps
+    except DataNotLoadedError:
+        return None
+    fastest = laps.pick_fastest()
+    by_time = (lap for _, lap in laps.dropna(subset=["LapTime"]).sort_values("LapTime").iterlaps())
+    candidates = itertools.chain([fastest] if fastest is not None else [], by_time)
+    # Merging telemetry is slow; a session this sparse is better left to the next one.
+    candidates = itertools.islice(candidates, _REFERENCE_LAP_ATTEMPTS)
+    return next((lap for lap in candidates if _has_telemetry(lap)), None)
+
+def _circuit_key(session: Session) -> int:
+    # As in FastF1's Session.get_circuit_info, which only takes the fastest
+    # lap as its reference, including its correction of Mugello's key.
+    circuit = session.session_info["Meeting"]["Circuit"]
+    if circuit["Key"] == 149 and circuit["ShortName"] == "Mugello":
+        return 146
+    return circuit["Key"]
 
 def build_circuit_info(session: Session) -> dict:
-    """Circuit layout from a session loaded with laps and telemetry."""
-    circuit_info = session.get_circuit_info()
+    """Circuit layout from a session loaded with laps and telemetry.
+
+    Raises CircuitInfoUnavailable when no lap has both car and position data,
+    e.g. when the session's telemetry is missing upstream, and NoCircuitLayout
+    when FastF1 has no layout of the circuit.
+    """
+    # Checked first: it's quicker than finding a reference lap, and holds for
+    # every session of the event.
+    circuit_key = _circuit_key(session)
+    circuit_info = get_mv_circuit_info(year=session.event.year, circuit_key=circuit_key)
+    if circuit_info is None:
+        name = session.session_info["Meeting"]["Circuit"]["ShortName"]
+        raise NoCircuitLayout(f"FastF1 has no layout of {name} (circuit key {circuit_key}) for {session.event.year}")
+    reference_lap = _reference_lap(session)
+    if reference_lap is None:
+        raise CircuitInfoUnavailable(f"none of the fastest laps of {session} has usable car and position data")
+    circuit_info.add_marker_distance(reference_lap=reference_lap)
 
     sector_distances = []
     try:
-        fastest_lap = session.laps.pick_fastest()
-        if fastest_lap is not None:
-            s1 = fastest_lap.get("Sector1Time")
-            s2 = fastest_lap.get("Sector2Time")
-            if s1 is not None and s2 is not None and not pd.isna(s1) and not pd.isna(s2):
-                tel = fastest_lap.get_telemetry()
-                if tel is not None and not tel.empty:
-                    tel_time = tel["Time"].dt.total_seconds()
-                    s1_secs = pd.Timedelta(s1).total_seconds()
-                    s2_secs = s1_secs + pd.Timedelta(s2).total_seconds()
-                    for t in [s1_secs, s2_secs]:
-                        mask = tel_time >= t
-                        if mask.any():
-                            sector_distances.append(float(tel.loc[mask.idxmax(), "Distance"]))
+        s1 = reference_lap.get("Sector1Time")
+        s2 = reference_lap.get("Sector2Time")
+        if s1 is not None and s2 is not None and not pd.isna(s1) and not pd.isna(s2):
+            tel = reference_lap.get_telemetry()
+            if tel is not None and not tel.empty:
+                tel_time = tel["Time"].dt.total_seconds()
+                s1_secs = pd.Timedelta(s1).total_seconds()
+                s2_secs = s1_secs + pd.Timedelta(s2).total_seconds()
+                for t in [s1_secs, s2_secs]:
+                    mask = tel_time >= t
+                    if mask.any():
+                        sector_distances.append(float(tel.loc[mask.idxmax(), "Distance"]))
     except Exception:
         logger.exception("Error computing sector distances")
 
@@ -372,11 +560,6 @@ def _get_event_sessions_detailed(event, year: int, event_id: str, config: Sessio
         end_dt = date + timedelta(minutes=duration)
         end_time = str(end_dt.time())[:5] if end_dt else None
         status = _event_status(end_dt, start_date=date)
-        weather = None
-        fastest_lap = None
-        if status == "completed" and (config.weather or config.laps):
-            weather, fastest_lap = _get_session_data(year, event_id, identifier, config)
-
         sessions.append({
             "name": name,
             "identifier": identifier,
@@ -384,16 +567,52 @@ def _get_event_sessions_detailed(event, year: int, event_id: str, config: Sessio
             "start_time": start_time,
             "end_time": end_time,
             "status": status,
-            "weather": weather,
-            "fastest_lap": fastest_lap,
+            "weather": None,
+            "fastest_lap": None,
         })
+
+    completed = [s["identifier"] for s in sessions if s["status"] == "completed"]
+    if completed and (config.weather or config.laps):
+        archive = reader.current()
+        stored = archive.sessions(year, event_id, completed) if archive is not None else {}
+        for s in sessions:
+            if s["identifier"] not in completed:
+                continue
+            if stored.get(s["identifier"]) is not None:
+                s["weather"], s["fastest_lap"] = _session_data_from_archive(stored[s["identifier"]], config)
+            else:
+                s["weather"], s["fastest_lap"] = _get_session_data(year, event_id, s["identifier"], config)
     return sessions
+
+
+def _mean(values: list[float | None]) -> float | None:
+    # Same summation as the pandas mean of the FastF1 path, so both round alike.
+    array = np.array([np.nan if v is None else v for v in values], dtype=float)
+    return None if np.isnan(array).all() else round_val(np.nanmean(array))
+
+
+def _weather_from_archive(w: StoredWeather) -> dict:
+    return {
+        "air_temp": _mean(w.air_temp),
+        "track_temp": _mean(w.track_temp),
+        "humidity": _mean(w.humidity),
+        "wind_speed": _mean(w.wind_speed),
+        "rainfall": any(w.rainfall),
+    }
+
+
+def _session_data_from_archive(stored: StoredSession, config: SessionDetailConfig):
+    weather = _weather_from_archive(stored.weather) if config.weather and stored.weather is not None else None
+    fastest_lap = None
+    if config.laps and stored.fastest_lap is not None:
+        fastest_lap = format_seconds(stored.fastest_lap.lap_time)
+    return weather, fastest_lap
 
 
 def _get_session_data(year: int, event_id: str, identifier: str, config: SessionDetailConfig):
     try:
         session = resolve_session(year, event_id, identifier)
-        session = cached_locked_load(session, year, event_id, identifier, laps=config.laps, telemetry=False, messages=False, weather=config.weather)
+        locked_load(session, year, event_id, identifier, laps=config.laps, telemetry=False, messages=False, weather=config.weather)
 
         weather = None
         w = session.weather_data if config.weather else None

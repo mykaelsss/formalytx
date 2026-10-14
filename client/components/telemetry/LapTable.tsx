@@ -229,7 +229,7 @@ export default function LapTable({ teams }: LapTableProps) {
                         </span>
                         <TyreBadge
                           compound={
-                            (lap.compound?.toUpperCase() ?? "HARD") as Compound
+                            (lap.compound?.toUpperCase() ?? null) as Compound | null
                           }
                           size={20}
                           year={year}

@@ -31,14 +31,21 @@ from app.archive.models import (
     StoredWeather,
 )
 from app.caching import SETTLE_BUFFER
-from app.schedule.services import SESSION_DURATION_MINUTES, SESSION_NAME_TO_IDENTIFIER, build_circuit_info
+from app.schedule.services import (
+    SESSION_DURATION_MINUTES,
+    SESSION_NAME_TO_IDENTIFIER,
+    CircuitInfoUnavailable,
+    NoCircuitLayout,
+    build_circuit_info,
+)
 from app.utils import resolve_session
 
 logger = logging.getLogger("uvicorn.error")
 
-# FastF1 data usually appears within an hour or two of a session ending.
-# Waiting longer avoids archiving a partial upload as if it were complete.
-EXPORT_DELAY = timedelta(hours=6)
+# FastF1 data usually appears within an hour or two of a session ending. Until
+# this long after, a session it can't fully load is taken to be still uploading
+# rather than failed.
+UPLOAD_WINDOW = timedelta(hours=6)
 # Testing days run all day, not for a regular session's length.
 TESTING_SESSION_MINUTES = 9 * 60
 QUALIFYING_SESSION_NAMES = {"Qualifying", "Sprint Qualifying", "Sprint Shootout"}
@@ -46,8 +53,10 @@ QUALIFYING_SESSION_NAMES = {"Qualifying", "Sprint Qualifying", "Sprint Shootout"
 
 class ExportOutcome(enum.Enum):
     EXPORTED = "exported"
+    UNCHANGED = "unchanged"
     ALREADY_EXPORTED = "already exported"
     NOT_READY = "not ready"
+    NO_DATA = "no data"
 
 
 def _utc(value) -> datetime:
@@ -89,14 +98,14 @@ def skip_reason(
 ) -> ExportOutcome | None:
     """Why this session shouldn't be exported now, or None to export it.
 
-    A stored copy is exported again once its results become final, so a
-    session exported soon after it ended picks up later penalties.
+    A session is exported as soon as it has ended, and again on every run until
+    its results are final, so it picks up a partial upload being completed and
+    later penalties. Those runs only write what changed.
     """
-    if not force and (end is None or now < end + EXPORT_DELAY):
+    if not force and (end is None or now < end):
         return ExportOutcome.NOT_READY
-    if existing is not None and not overwrite:
-        if existing.results_final or not results_final(end, now):
-            return ExportOutcome.ALREADY_EXPORTED
+    if existing is not None and existing.results_final and not overwrite:
+        return ExportOutcome.ALREADY_EXPORTED
     return None
 
 
@@ -238,26 +247,30 @@ def _telemetry_loaded(session: Session) -> bool:
         return False
 
 
+def _loaded(session: Session, attr: str):
+    try:
+        return getattr(session, attr)
+    except DataNotLoadedError:
+        return None
+
+
+def _lap_driver_numbers(session: Session) -> list[str]:
+    laps = _loaded(session, "laps")
+    return [] if laps is None else [str(n) for n in laps["DriverNumber"].dropna().unique()]
+
+
 def _missing_parts(session: Session) -> list[str]:
     """Parts of a loaded session that came back empty.
 
     FastF1 reports some failed requests only as a warning, e.g. "Car position
     data is unavailable!", so these are checked on the data itself.
     """
-
-    def loaded(attr: str):
-        try:
-            return getattr(session, attr)
-        except DataNotLoadedError:
-            return None
-
     missing = []
-    laps = loaded("laps")
-    drivers = [] if laps is None else [str(n) for n in laps["DriverNumber"].dropna().unique()]
+    drivers = _lap_driver_numbers(session)
     if not drivers:
         missing.append("laps")
     for attr, label in (("car_data", "car data"), ("pos_data", "position data")):
-        data = loaded(attr) or {}
+        data = _loaded(session, attr) or {}
         absent = [d for d in drivers if d not in data or data[d].empty]
         if absent:
             missing.append(f"{label} for {len(absent)} of {len(drivers)} drivers")
@@ -266,7 +279,7 @@ def _missing_parts(session: Session) -> list[str]:
         ("weather_data", "weather"),
         ("race_control_messages", "race control messages"),
     ):
-        data = loaded(attr)
+        data = _loaded(session, attr)
         if data is None or data.empty:
             missing.append(label)
     return missing
@@ -343,6 +356,20 @@ def _driver_order(session: Session, drivers: list[StoredDriver]) -> list[str]:
     return ordered + [d for d in with_laps if d not in ordered]
 
 
+def _build_circuit(session: Session, year: int, event_id: str) -> StoredCircuit | None:
+    """The session's circuit info, or None (logged) when it can't be built from
+    this session. Raises NoCircuitLayout, which no session of the event avoids."""
+    try:
+        return StoredCircuit.model_validate(build_circuit_info(session))
+    except NoCircuitLayout:
+        raise
+    except CircuitInfoUnavailable as exc:
+        logger.warning("Could not build circuit info for %s %s: %s", year, event_id, exc)
+    except Exception:
+        logger.exception("Could not build circuit info for %s %s from %s", year, event_id, session.name)
+    return None
+
+
 def export_loaded_session(
     archive: SessionArchive,
     session: Session,
@@ -351,16 +378,19 @@ def export_loaded_session(
     identifier: str,
     *,
     now: datetime,
+    existing: StoredSession | None = None,
     load_failures: list[str] | None = None,
     upload_workers: int = 16,
-) -> StoredSession:
+) -> ExportOutcome:
     """Write a session loaded with laps, telemetry and weather to the archive.
 
     Laps, telemetry and the circuit are written first and session.json last,
-    so readers only see a session once all of its objects exist.
+    so readers only see a session once all of its objects exist. Objects that
+    are stored already, e.g. when `existing` is exported again, aren't written.
     """
     started = time.monotonic()
     identifier = identifier.upper()
+    stored_digests = archive.digests(year, event_id, identifier)
     start = session_start_utc(session)
     drivers = _stored_drivers(session)
     lap_drivers = _driver_order(session, drivers) if session.laps is not None and not session.laps.empty else []
@@ -379,7 +409,9 @@ def export_loaded_session(
                 if telemetry_loaded and lap_number is not None:
                     telemetry = _lap_telemetry(lap, driver, lap_number)
                 if telemetry is not None:
-                    uploads.append(pool.submit(archive.put_lap_telemetry, year, event_id, identifier, telemetry))
+                    uploads.append(pool.submit(
+                        archive.put_lap_telemetry, year, event_id, identifier, telemetry, unless=stored_digests
+                    ))
                     telemetry_count += 1
                 stored_laps.append(_stored_lap(lap, parts.get(index), telemetry is not None))
             numbers = driver_laps["DriverNumber"].dropna()
@@ -388,18 +420,22 @@ def export_loaded_session(
                 driver_number=str(numbers.iloc[0]) if not numbers.empty else None,
                 laps=stored_laps,
             )
-            uploads.append(pool.submit(archive.put_driver_laps, year, event_id, identifier, laps))
+            uploads.append(pool.submit(archive.put_driver_laps, year, event_id, identifier, laps, unless=stored_digests))
 
-        if session.name == session.event.get("Session1") and telemetry_loaded:
+        # The first session builds the event's circuit info. A later one only
+        # does while the event has none, e.g. when the first was cancelled or
+        # its telemetry is missing upstream.
+        first_session = session.name == session.event.get("Session1")
+        if telemetry_loaded and (first_session or archive.get_circuit(year, event_id) is None):
             try:
-                circuit = StoredCircuit.model_validate(build_circuit_info(session))
-            except Exception:
-                logger.exception("Could not build circuit info for %s %s", year, event_id)
-            else:
-                uploads.append(pool.submit(archive.put_circuit, year, event_id, circuit))
+                circuit = _build_circuit(session, year, event_id)
+            except NoCircuitLayout as exc:
+                logger.warning("Could not build circuit info for %s %s: %s", year, event_id, exc)
+                circuit = None
+            if circuit is not None:
+                uploads.append(pool.submit(archive.put_circuit, year, event_id, circuit, unless=stored_digests))
 
-        for upload in uploads:
-            upload.result()
+        written = sum(upload.result() for upload in uploads)
 
     stored = StoredSession(
         exported_at=now,
@@ -417,12 +453,20 @@ def export_loaded_session(
         weather=_stored_weather(session),
         load_failures=load_failures or [],
     )
+    # exported_at always differs, so session.json is only compared without it.
+    if existing is not None and not written and stored.model_copy(update={"exported_at": existing.exported_at}) == existing:
+        logger.info(
+            "Unchanged %s %s %s since %s (%.1fs)",
+            year, event_id, identifier, existing.exported_at.isoformat(timespec="minutes"), time.monotonic() - started,
+        )
+        return ExportOutcome.UNCHANGED
     archive.put_session(stored)
     logger.info(
-        "Exported %s %s %s: %d drivers, %d laps with telemetry in %.1fs",
-        year, event_id, identifier, len(lap_drivers), telemetry_count, time.monotonic() - started,
+        "Exported %s %s %s: %d drivers, %d laps with telemetry, %d of %d objects changed in %.1fs",
+        year, event_id, identifier, len(lap_drivers), telemetry_count, written + 1, len(uploads) + 1,
+        time.monotonic() - started,
     )
-    return stored
+    return ExportOutcome.EXPORTED
 
 
 class IncompleteLoadError(RuntimeError):
@@ -487,11 +531,13 @@ def export_session(
     """Load a session from FastF1 and export it, unless it isn't ready yet or
     is already exported (see skip_reason).
 
-    Raises IncompleteLoadError when FastF1 fails to load part of the session,
-    unless allow_incomplete is set for data that doesn't exist upstream.
-    allow_incomplete_when_final sets it only once the session's results are
-    final: data still missing by then isn't expected to appear upstream, so
-    scheduled exports stop retrying the session.
+    A session FastF1 can't fully load within UPLOAD_WINDOW of its end isn't
+    ready yet. After that, one without any laps is taken to have no data
+    upstream, e.g. because it was cancelled, and isn't exported. Otherwise
+    IncompleteLoadError is raised, unless allow_incomplete is set for data that
+    doesn't exist upstream. allow_incomplete_when_final sets it only once the
+    session's results are final: data still missing by then isn't expected to
+    appear upstream, so scheduled exports stop retrying the session.
     """
     now = now or datetime.now(timezone.utc)
     session = resolve_session(year, event_id, identifier)
@@ -501,17 +547,73 @@ def export_session(
     if reason is not None:
         logger.info("Skipping %s %s %s: %s", year, event_id, identifier, reason.value)
         return reason
-    with _capture_load_failures() as load:
+    with _capture_load_failures() as load, _fresh_while_settling(end, now):
         # Race control messages are what FastF1 marks deleted laps (and so
         # personal bests and quali-like results) from.
         session.load(laps=True, telemetry=True, weather=True, messages=True)
     failures = load.failures + _missing_parts(session)
-    if failures:
-        if not (allow_incomplete or (allow_incomplete_when_final and results_final(end, now))):
+    if failures and not allow_incomplete:
+        if end is not None and now < end + UPLOAD_WINDOW:
+            logger.info("Skipping %s %s %s: not fully uploaded yet (%s)", year, event_id, identifier, "; ".join(failures))
+            return ExportOutcome.NOT_READY
+        if not _lap_driver_numbers(session):
+            logger.warning("Skipping %s %s %s: FastF1 has no laps of it (%s)", year, event_id, identifier, "; ".join(failures))
+            return ExportOutcome.NO_DATA
+        if not (allow_incomplete_when_final and results_final(end, now)):
             raise IncompleteLoadError(failures)
+    if failures:
         logger.warning(
             "Exporting %s %s %s without what FastF1 failed to load: %s",
             year, event_id, identifier, "; ".join(failures),
         )
-    export_loaded_session(archive, session, year, event_id, identifier, now=now, load_failures=failures)
-    return ExportOutcome.EXPORTED
+    return export_loaded_session(
+        archive, session, year, event_id, identifier, now=now, existing=existing, load_failures=failures
+    )
+
+
+@contextmanager
+def _fresh_while_settling(end: datetime | None, now: datetime) -> Iterator[None]:
+    """Bypass FastF1's cache while a session's data may still change upstream.
+
+    FastF1 keeps the data it processed for good, so a cached partial upload or
+    provisional result would otherwise be exported on every later run. The
+    cache is disabled process-wide, which suits the export command's single
+    loading thread.
+    """
+    if end is not None and results_final(end, now):
+        yield
+        return
+    with fastf1.Cache.disabled():
+        yield
+
+
+def export_circuit(
+    archive: SessionArchive,
+    year: int,
+    event_id: str,
+    identifiers: list[str],
+    *,
+    overwrite: bool = False,
+) -> ExportOutcome:
+    """Build an event's circuit info from the first of the given sessions that
+    has a lap with car and position data, without exporting the sessions.
+
+    Raises CircuitInfoUnavailable when none of them has one, or NoCircuitLayout
+    as soon as one finds FastF1 has no layout of the circuit.
+    """
+    if not overwrite and archive.get_circuit(year, event_id) is not None:
+        logger.info("Skipping circuit info for %s %s: already exported", year, event_id)
+        return ExportOutcome.ALREADY_EXPORTED
+    for identifier in identifiers:
+        session = resolve_session(year, event_id, identifier)
+        # FastF1 leaves parts it can't load empty, which then don't build; an
+        # error it raises (e.g. the rate limit) fails the event instead.
+        session.load(laps=True, telemetry=True, weather=False, messages=False)
+        circuit = _build_circuit(session, year, event_id)
+        if circuit is not None:
+            archive.put_circuit(year, event_id, circuit)
+            logger.info("Exported circuit info for %s %s from %s", year, event_id, identifier)
+            return ExportOutcome.EXPORTED
+    if not identifiers:
+        raise CircuitInfoUnavailable(f"{year} {event_id} has no finished sessions")
+    raise CircuitInfoUnavailable(f"no lap of {year} {event_id} {', '.join(identifiers)} has usable car and position data")

@@ -36,7 +36,8 @@ f1_telemetry/
     │   ├── main.py            # App entry, middleware, error handlers
     │   ├── config.py          # Settings (env vars via pydantic-settings)
     │   ├── caching.py         # HTTP Cache-Control header policy
-    │   ├── fastf1_loader.py   # In-process Session cache + per-key load locks
+    │   ├── fastf1_loader.py   # FastF1 fallback: per-key load locks, disk cache pruning
+    │   ├── archive/           # Session archive on R2: models, export command, reader
     │   ├── sessions/          # Session info, driver laps, telemetry
     │   │   ├── routes.py
     │   │   ├── services.py
@@ -90,10 +91,17 @@ Why: FastF1 assigns `RoundNumber = 0` to every testing event in a season, so rou
 
 ## Data Flow
 
-- F1 data is sourced entirely from FastF1 — no live API, no separate database
-- Request → route → service → `resolve_session(year, event_id, identifier)` (in `app/utils.py`) → FastF1
-- FastF1 sessions are loaded via `cached_locked_load` in `app/fastf1_loader.py`. A per-key lock (via `KeyLockRegistry` in `app/utils.py`) serializes concurrent loads of the same session, and the loaded `Session` is pinned in process memory (LRU 8) so repeat requests skip `session.load()` entirely
-- FastF1's on-disk cache lives in `server/cache/` (mounted as a volume in Docker Compose)
+- F1 data is sourced from FastF1, and finished sessions are exported once into the session archive (see [Session archive](#session-archive)).
+- Request → route → service → the archive, through `app/archive/reader.py`.
+  Each request reads only the objects it needs: the session summary, then one object per driver for laps or one per lap for telemetry, fetched in parallel.
+- Sessions that aren't archived yet (live, just uploaded and waiting for the next export, or missing from the archive) fall back to FastF1 through `resolve_session` (in `app/utils.py`).
+- FastF1 sessions are loaded via `locked_load` in `app/fastf1_loader.py`.
+  A per-key lock (via `KeyLockRegistry` in `app/utils.py`) serializes concurrent loads of the same session, so only the first fetches it upstream.
+  Loaded sessions aren't kept in memory, since each holds a few hundred MB: each request loads its session again from FastF1's on-disk cache.
+- An event the archive has no circuit info for builds it through FastF1 from the first finished session that isn't archived and can, as the export does.
+  Events without any, such as at a circuit FastF1 has no layout for, get a 404.
+- If the archive can't be read, requests fail with a 503 and a `Retry-After` header rather than falling back to FastF1, which would load every session into memory at once.
+- FastF1's on-disk cache lives in `server/cache/` (mounted as a volume in Docker Compose).
 
 ---
 
@@ -113,18 +121,18 @@ Note: avoid `Cache-Control: immutable` on data endpoints. It pins responses in b
 
 ### In-process caches
 
-Sitting in front of the per-request work, each keyed by the parameters that determine the response. All bounded LRU, all guarded by a `KeyLockRegistry` (in `app/utils.py`) so concurrent requests for the same key serialize on the build instead of stampeding.
+Responses are cached by Cloudflare, so the server keeps only small caches.
+They're process-local: with several uvicorn workers, each has its own.
 
 | Cache | Module | Key | Cap |
 |---|---|---|---|
-| Loaded `Session` objects | `app/fastf1_loader.py` | `(year, event_id, identifier)` | 8 |
-| Driver-laps response | `app/sessions/services.py` | `(year, event_id, identifier, drivers)` | 256 |
-| Per-lap telemetry dict | `app/sessions/services.py` | `(year, event_id, identifier, driver, lap_number)` | 1024 |
-| Circuit response | `app/schedule/services.py` | `(year, event_id)` | 64 |
+| Archived session summaries | `app/archive/reader.py` | `(year, event_id, identifier)` | 256 |
+| Archived circuits | `app/archive/reader.py` | `(year, event_id)` | 128 |
+| Circuits built through FastF1 | `app/schedule/services.py` | `(year, event_id)` | 64 |
 
-The Session cache skips re-deserializing pandas DataFrames from FastF1's pickle cache. The per-lap telemetry cache skips the `get_car_data().add_distance()` + `.tolist()` work that dominates a cold telemetry response. The laps and circuit caches memoize the full response shape — cheap reads on repeat queries.
-
-These caches are process-local. If you ever run multiple uvicorn workers, each worker has its own; hit rate divides accordingly.
+Every archive request needs its session summary, so those are cached; summaries whose results aren't final yet are re-read after 10 minutes.
+Laps and telemetry are read from the archive on each request.
+Circuits built through FastF1 are kept, and events without one are re-checked after 10 minutes.
 
 ---
 
@@ -149,10 +157,12 @@ The `compose.override.yaml` is picked up automatically in development — it ena
 
 ```bash
 cd server
-docker compose up --build --watch
+infisical run -- docker compose up --build --watch
 ```
 
 The API will be available at `http://localhost:80` (via nginx) or `http://localhost:8000` (direct).
+Running through `infisical run` passes the R2 credentials into the container, so archived sessions are served from the dev bucket.
+Without them, every session is loaded through FastF1.
 
 ### Session archive
 
@@ -164,7 +174,10 @@ infisical run -- uv run python -m app.archive               # every finished ses
 infisical run -- uv run python -m app.archive 2025          # every finished session of 2025
 infisical run -- uv run python -m app.archive 2025 r16      # every session of one event
 infisical run -- uv run python -m app.archive 2025 r16 R    # one session
+infisical run -- uv run python -m app.archive --recent      # this year's events under way or ended in the last week
 ```
+
+`--recent` is what the scheduled export runs: the week covers the 2 days results take to become final, with room to catch up on missed runs.
 
 These write to Infisical's dev environment, whose bucket is only for testing.
 The production bucket, which the backfill fills, is selected with `--env=prod`:
@@ -173,17 +186,31 @@ The production bucket, which the backfill fills, is selected with `--env=prod`:
 infisical run --env=prod -- uv run python -m app.archive 2025
 ```
 
-Sessions already exported are skipped unless their results have since become final.
-`--overwrite` exports them again, and `--force` also exports sessions that ended less than 6 hours ago.
+A session is exported as soon as it has ended and FastF1 can fully load it.
+Until its results are final, 2 days after it ends, every run checks it again, so it picks up a partial upload being completed and later penalties.
+Those checks bypass FastF1's cache, which would otherwise keep the first data it saw, and only write the objects that changed.
+Sessions with final results are skipped; `--overwrite` checks them again, and `--force` also exports sessions that haven't ended.
 A session FastF1 can't fully load (laps, car or position data, results or weather) isn't exported.
+Within 6 hours of its end it's taken to be still uploading.
+After that, a session without any laps, such as one cancelled for weather, is skipped as having no data, and any other is skipped as incomplete.
 If that data doesn't exist upstream, `--allow-incomplete` exports it with the missing parts recorded.
 `--allow-incomplete-when-final` does so only once the session's results are final, 2 days after it ends, since missing data rarely appears later than that.
 
+An event's circuit info is built when its first session is exported.
+If that session has no lap with car and position data, the next session exported builds it instead.
+An event at a circuit FastF1 has no layout for, such as one new to MultiViewer, gets none.
+`--circuit` builds only the circuit info, from the first finished session that can, for events that have none:
+
+```bash
+infisical run --env=prod -- uv run python -m app.archive 2018 r12 --circuit
+```
+
 ### Scheduled export
 
-In production, a Railway cron service runs the export for the current season every hour.
-It archives each session 6 hours after it ends, and again once its results are final.
-A session FastF1 can't fully load is retried every hour until its results are final, then archived with what loaded.
+In production, a Railway cron service runs `--recent` every 15 minutes.
+Each session is exported as soon as FastF1 can fully load it, and checked again on every run until its results are final, 2 days after it ends.
+A run with nothing new takes a couple of seconds and writes nothing.
+A session FastF1 can't fully load is retried on every run until its results are final, then archived with what loaded (`--allow-incomplete-when-final`).
 A run exits with an error only when a session failed with one, such as R2 or FastF1 being unreachable; the next run retries it.
 
 The service is built from `server/` like the API, and its settings live in `server/railway.cron.toml`.

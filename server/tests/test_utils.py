@@ -5,7 +5,7 @@ import time
 import pytest
 from fastapi import HTTPException
 
-from app.utils import KeyLockRegistry, LockWaitTimeout, parse_event_id
+from app.utils import ExpiringLRU, KeyLockRegistry, LockWaitTimeout, parse_event_id
 
 
 @pytest.mark.parametrize(
@@ -171,3 +171,25 @@ def test_key_lock_registry_waiter_gets_lock_once_released_in_time():
     t2.join(timeout=3.0)
 
     assert acquired.is_set()
+
+
+def test_lru_evicts_least_recently_used():
+    lru = ExpiringLRU(2)
+    lru.put(("a",), 1)
+    lru.put(("b",), 2)
+    lru.get(("a",))
+    lru.put(("c",), 3)
+    assert lru.get(("a",)) == 1
+    assert lru.get(("b",)) is None
+    assert lru.get(("c",)) == 3
+
+
+def test_lru_entries_expire(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr("app.utils.time.monotonic", lambda: now[0])
+    lru = ExpiringLRU(2)
+    lru.put(("a",), 1, ttl=60)
+    lru.put(("b",), 2)
+    now[0] += 60
+    assert lru.get(("a",)) is None
+    assert lru.get(("b",)) == 2
