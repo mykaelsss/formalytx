@@ -79,32 +79,51 @@ class LocalBlobStore:
         return found
 
 
+# A pooled connection left idle can be dropped on the way to R2 without either
+# end hearing about it, and a request sent on one waits out the whole read
+# timeout before botocore retries on a new connection. Archive objects are
+# small and R2 serves them in well under a second, so reads give up quickly.
+READ_TIMEOUT_SECONDS = 5
+# Uploads and listings keep a longer timeout: an export uploads many objects at
+# once, possibly over a slow link.
+WRITE_TIMEOUT_SECONDS = 30
+
+
+def _r2_client(account_id: str, access_key_id: str, secret_access_key: str, read_timeout: float):
+    return boto3.client(
+        "s3",
+        endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+        region_name="auto",
+        config=Config(
+            # Reads and uploads run on thread pools; one connection per worker.
+            max_pool_connections=32,
+            retries={"max_attempts": 5, "mode": "standard"},
+            connect_timeout=10,
+            read_timeout=read_timeout,
+            # R2 doesn't support every checksum newer boto3 sends by default.
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+        ),
+    )
+
+
 class R2BlobStore:
     """Objects in a Cloudflare R2 bucket, through its S3-compatible API."""
 
     def __init__(self, account_id: str, access_key_id: str, secret_access_key: str, bucket: str, client=None):
         self._bucket = bucket
-        self._client = client or boto3.client(
-            "s3",
-            endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
-            aws_access_key_id=access_key_id,
-            aws_secret_access_key=secret_access_key,
-            region_name="auto",
-            config=Config(
-                # Uploads run on a thread pool; one connection per worker.
-                max_pool_connections=32,
-                retries={"max_attempts": 5, "mode": "standard"},
-                connect_timeout=10,
-                read_timeout=30,
-                # R2 doesn't support every checksum newer boto3 sends by default.
-                request_checksum_calculation="when_required",
-                response_checksum_validation="when_required",
-            ),
-        )
+        if client is not None:
+            self._reads = self._writes = client
+        else:
+            credentials = (account_id, access_key_id, secret_access_key)
+            self._reads = _r2_client(*credentials, read_timeout=READ_TIMEOUT_SECONDS)
+            self._writes = _r2_client(*credentials, read_timeout=WRITE_TIMEOUT_SECONDS)
 
     def get(self, key: str) -> bytes | None:
         try:
-            response = self._client.get_object(Bucket=self._bucket, Key=key)
+            response = self._reads.get_object(Bucket=self._bucket, Key=key)
         except ClientError as exc:
             if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
                 return None
@@ -112,12 +131,12 @@ class R2BlobStore:
         return response["Body"].read()
 
     def put(self, key: str, data: bytes, content_type: str) -> None:
-        self._client.put_object(Bucket=self._bucket, Key=key, Body=data, ContentType=content_type)
+        self._writes.put_object(Bucket=self._bucket, Key=key, Body=data, ContentType=content_type)
 
     def digests(self, prefix: str) -> dict[str, str]:
         # R2's ETag of an object uploaded in one part is its MD5.
         found = {}
-        for page in self._client.get_paginator("list_objects_v2").paginate(Bucket=self._bucket, Prefix=prefix):
+        for page in self._writes.get_paginator("list_objects_v2").paginate(Bucket=self._bucket, Prefix=prefix):
             for item in page.get("Contents", []):
                 found[item["Key"]] = item["ETag"].strip('"')
         return found
