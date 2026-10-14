@@ -213,19 +213,20 @@ A run with nothing new takes a couple of seconds and writes nothing.
 A session FastF1 can't fully load is retried on every run until its results are final, then archived with what loaded (`--allow-incomplete-when-final`).
 A run exits with an error only when a session failed with one, such as R2 or FastF1 being unreachable; the next run retries it.
 
-The service, `formalytx-cron`, is built from `server/` like the API and configured in the Railway dashboard, since Railway's Config as Code is deprecated and new services can't use it.
-Its settings:
+The service, `formalytx-cron`, is built from `server/` like the API.
+Both services, the API's FastF1 cache volume and the cron's schedule (`*/15 * * * *`, UTC) and restart policy (never; the next run retries) are defined in `server/.railway/railway.ts`, Railway's Infrastructure as Code.
+Variables aren't in it: they stay on Railway, and the cron's R2 variables reference the API service's (e.g. `${{formalytx.R2_BUCKET}}`).
+The cron's start command calls the image's entrypoint itself, since a start command replaces it, and the entrypoint is what drops to the `nonroot` user.
+The cron has no volume or domain: FastF1's cache only lasts for one run.
 
-| Setting | Value |
-|---|---|
-| Root directory | `/server` |
-| Custom start command | `/usr/local/bin/docker-entrypoint.sh python -m app.archive --recent --allow-incomplete-when-final` |
-| Cron schedule | `*/15 * * * *` (UTC; a run still going when the next is due makes Railway skip that one) |
-| Restart policy | Never (the next scheduled run retries) |
-| Variables | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`, as references to the API service's (e.g. `${{formalytx.R2_BUCKET}}`) |
+To change the setup, edit `railway.ts`, then from `server/`:
 
-The start command calls the image's entrypoint itself, since a start command replaces it, and the entrypoint is what drops to the `nonroot` user.
-It needs no volume or domain: FastF1's cache only lasts for one run.
+```bash
+railway config plan    # preview; doesn't change Railway
+railway config apply   # apply after reviewing the plan
+```
+
+`apply` deletes services the file leaves out, so add any service created in the dashboard to the file first, and run `plan` to catch settings changed in the dashboard since.
 
 ### Frontend
 
