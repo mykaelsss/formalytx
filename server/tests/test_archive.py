@@ -34,7 +34,7 @@ from app.archive.models import (
     StoredScheduleSession,
     StoredSession,
 )
-from app.archive.store import LocalBlobStore, R2BlobStore
+from app.archive.store import READ_TIMEOUT_SECONDS, WRITE_TIMEOUT_SECONDS, LocalBlobStore, R2BlobStore
 
 _CEST = timezone(timedelta(hours=2))
 
@@ -236,6 +236,13 @@ def test_r2_get_other_errors_raise(r2):
     stubber.add_client_error("get_object", service_error_code="AccessDenied", http_status_code=403)
     with pytest.raises(Exception, match="AccessDenied"):
         store.get("v1/a.json.gz")
+
+
+def test_r2_reads_give_up_sooner_than_uploads():
+    store = R2BlobStore("account", "key", "secret", "formalytx-data")
+    assert store._reads.meta.config.read_timeout == READ_TIMEOUT_SECONDS
+    assert store._writes.meta.config.read_timeout == WRITE_TIMEOUT_SECONDS
+    assert READ_TIMEOUT_SECONDS < WRITE_TIMEOUT_SECONDS
 
 
 def test_r2_put(r2):
