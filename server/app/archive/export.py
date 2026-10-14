@@ -56,6 +56,7 @@ class ExportOutcome(enum.Enum):
     UNCHANGED = "unchanged"
     ALREADY_EXPORTED = "already exported"
     NOT_READY = "not ready"
+    NO_DATA = "no data"
 
 
 def _utc(value) -> datetime:
@@ -246,26 +247,30 @@ def _telemetry_loaded(session: Session) -> bool:
         return False
 
 
+def _loaded(session: Session, attr: str):
+    try:
+        return getattr(session, attr)
+    except DataNotLoadedError:
+        return None
+
+
+def _lap_driver_numbers(session: Session) -> list[str]:
+    laps = _loaded(session, "laps")
+    return [] if laps is None else [str(n) for n in laps["DriverNumber"].dropna().unique()]
+
+
 def _missing_parts(session: Session) -> list[str]:
     """Parts of a loaded session that came back empty.
 
     FastF1 reports some failed requests only as a warning, e.g. "Car position
     data is unavailable!", so these are checked on the data itself.
     """
-
-    def loaded(attr: str):
-        try:
-            return getattr(session, attr)
-        except DataNotLoadedError:
-            return None
-
     missing = []
-    laps = loaded("laps")
-    drivers = [] if laps is None else [str(n) for n in laps["DriverNumber"].dropna().unique()]
+    drivers = _lap_driver_numbers(session)
     if not drivers:
         missing.append("laps")
     for attr, label in (("car_data", "car data"), ("pos_data", "position data")):
-        data = loaded(attr) or {}
+        data = _loaded(session, attr) or {}
         absent = [d for d in drivers if d not in data or data[d].empty]
         if absent:
             missing.append(f"{label} for {len(absent)} of {len(drivers)} drivers")
@@ -274,7 +279,7 @@ def _missing_parts(session: Session) -> list[str]:
         ("weather_data", "weather"),
         ("race_control_messages", "race control messages"),
     ):
-        data = loaded(attr)
+        data = _loaded(session, attr)
         if data is None or data.empty:
             missing.append(label)
     return missing
@@ -526,8 +531,10 @@ def export_session(
     is already exported (see skip_reason).
 
     A session FastF1 can't fully load within UPLOAD_WINDOW of its end isn't
-    ready yet. After that, IncompleteLoadError is raised, unless
-    allow_incomplete is set for data that doesn't exist upstream.
+    ready yet. After that, one without any laps is taken to have no data
+    upstream, e.g. because it was cancelled, and isn't exported. Otherwise
+    IncompleteLoadError is raised, unless allow_incomplete is set for data that
+    doesn't exist upstream.
     """
     now = now or datetime.now(timezone.utc)
     session = resolve_session(year, event_id, identifier)
@@ -546,6 +553,9 @@ def export_session(
         if end is not None and now < end + UPLOAD_WINDOW:
             logger.info("Skipping %s %s %s: not fully uploaded yet (%s)", year, event_id, identifier, "; ".join(failures))
             return ExportOutcome.NOT_READY
+        if not _lap_driver_numbers(session):
+            logger.warning("Skipping %s %s %s: FastF1 has no laps of it (%s)", year, event_id, identifier, "; ".join(failures))
+            return ExportOutcome.NO_DATA
         raise IncompleteLoadError(failures)
     return export_loaded_session(
         archive, session, year, event_id, identifier, now=now, existing=existing, load_failures=failures

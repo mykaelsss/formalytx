@@ -3,6 +3,12 @@
     infisical run -- uv run python -m app.archive 2025          # every finished session of 2025
     infisical run -- uv run python -m app.archive 2025 r16      # every session of one event
     infisical run -- uv run python -m app.archive 2025 r16 R    # one session
+    infisical run -- uv run python -m app.archive --recent      # this year's events that ended in the last week
+
+The year defaults to the current one; seasons end in early December, so its
+last events are done by January. --recent is what the scheduled export runs:
+it only checks sessions of events that are under way or ended within RECENT,
+which covers the time their results take to become final.
 
 `infisical run` supplies the R2 credentials from Infisical's dev environment,
 whose bucket is only for testing. Pass --env=prod to it to export into the
@@ -16,8 +22,10 @@ end time is unknown.
 
 A session FastF1 fails to load completely isn't exported, since it would stay
 incomplete in the archive. Within UPLOAD_WINDOW of its end it's taken to be
-still uploading; after that it fails. Run it again later; if the data doesn't
-exist upstream, --allow-incomplete exports it with the missing parts recorded.
+still uploading. After that, a session without any laps is skipped as having
+no data upstream (e.g. it was cancelled), and any other fails. Run it again
+later; if the data doesn't exist upstream, --allow-incomplete exports it with
+the missing parts recorded.
 
 An event's circuit info is built when its first session is exported, or a
 later one if that fails. --circuit builds only the circuit info, from the
@@ -32,6 +40,7 @@ import logging
 import os
 import sys
 from collections import Counter
+from datetime import date, datetime, timedelta, timezone
 
 import fastf1
 
@@ -42,6 +51,11 @@ from app.fastf1_loader import install_request_timeouts
 from app.schedule.services import CircuitInfoUnavailable, get_event, get_schedule
 
 logger = logging.getLogger("uvicorn.error")
+
+# How long after an event --recent keeps checking its sessions: past the time
+# their results take to become final (SETTLE_BUFFER), with room to catch up on
+# runs that were missed.
+RECENT = timedelta(days=7)
 
 
 def _circuit_sources(year: int, event_id: str | None, identifier: str | None) -> list[tuple[str, list[str]]]:
@@ -57,7 +71,11 @@ def _circuit_sources(year: int, event_id: str | None, identifier: str | None) ->
     ]
 
 
-def _sessions(year: int, event_id: str | None, identifier: str | None) -> list[tuple[str, str]]:
+def _sessions(
+    year: int, event_id: str | None, identifier: str | None, *, ended_since: date | None = None
+) -> list[tuple[str, str]]:
+    """Sessions to export, of events that have started and, with ended_since,
+    haven't ended before that day."""
     if identifier:
         return [(event_id, identifier)]
     if event_id:
@@ -66,13 +84,14 @@ def _sessions(year: int, event_id: str | None, identifier: str | None) -> list[t
         (event["identifier"], s["identifier"])
         for event in get_schedule(year)["events"]
         if event["status"] != "upcoming"
+        and (ended_since is None or date.fromisoformat(event["event_date_end"]) >= ended_since)
         for s in get_event(year, event["identifier"])["sessions"]
     ]
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.archive", description="Export finished sessions into the archive.")
-    parser.add_argument("year", type=int)
+    parser.add_argument("year", type=int, nargs="?", help="defaults to the current year")
     parser.add_argument("event_id", nargs="?", help="e.g. r16 or t1")
     parser.add_argument("identifier", nargs="?", help="e.g. FP1, Q or R")
     parser.add_argument("--overwrite", action="store_true", help="export sessions that are already exported")
@@ -83,9 +102,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--circuit", action="store_true", help="only build circuit info, for events that have none"
     )
+    parser.add_argument(
+        "--recent", action="store_true", help=f"only events under way or ended in the last {RECENT.days} days"
+    )
     args = parser.parse_args(argv)
     if args.identifier and not args.event_id:
         parser.error("identifier requires event_id")
+    if args.recent and (args.event_id or args.circuit):
+        parser.error("--recent picks the events itself, and only exports sessions")
+    now = datetime.now(timezone.utc)
+    year = now.year if args.year is None else args.year
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -104,23 +130,24 @@ def main(argv: list[str] | None = None) -> int:
 
     outcomes: Counter[str] = Counter()
     if args.circuit:
-        for event_id, identifiers in _circuit_sources(args.year, args.event_id, args.identifier):
+        for event_id, identifiers in _circuit_sources(year, args.event_id, args.identifier):
             try:
-                outcome = export_circuit(archive, args.year, event_id, identifiers, overwrite=args.overwrite)
+                outcome = export_circuit(archive, year, event_id, identifiers, overwrite=args.overwrite)
             except CircuitInfoUnavailable as exc:
-                logger.error("No circuit info for %s %s: %s", args.year, event_id, exc)
+                logger.error("No circuit info for %s %s: %s", year, event_id, exc)
                 outcomes["failed"] += 1
             except Exception:
-                logger.exception("Failed to export circuit info for %s %s", args.year, event_id)
+                logger.exception("Failed to export circuit info for %s %s", year, event_id)
                 outcomes["failed"] += 1
             else:
                 outcomes[outcome.value] += 1
     else:
-        for event_id, identifier in _sessions(args.year, args.event_id, args.identifier):
+        ended_since = (now - RECENT).date() if args.recent else None
+        for event_id, identifier in _sessions(year, args.event_id, args.identifier, ended_since=ended_since):
             try:
                 outcome = export_session(
                     archive,
-                    args.year,
+                    year,
                     event_id,
                     identifier,
                     force=args.force,
@@ -128,10 +155,10 @@ def main(argv: list[str] | None = None) -> int:
                     allow_incomplete=args.allow_incomplete,
                 )
             except IncompleteLoadError as exc:
-                logger.error("Not exporting %s %s %s: %s", args.year, event_id, identifier, exc)
+                logger.error("Not exporting %s %s %s: %s", year, event_id, identifier, exc)
                 outcomes["failed"] += 1
             except Exception:
-                logger.exception("Failed to export %s %s %s", args.year, event_id, identifier)
+                logger.exception("Failed to export %s %s %s", year, event_id, identifier)
                 outcomes["failed"] += 1
             else:
                 outcomes[outcome.value] += 1

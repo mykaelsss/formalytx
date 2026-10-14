@@ -173,7 +173,11 @@ cd server
 infisical run -- uv run python -m app.archive 2025          # every finished session of 2025
 infisical run -- uv run python -m app.archive 2025 r16      # every session of one event
 infisical run -- uv run python -m app.archive 2025 r16 R    # one session
+infisical run -- uv run python -m app.archive --recent      # this year's events under way or ended in the last week
 ```
+
+The year defaults to the current one.
+`--recent` is what the scheduled export runs: the week covers the 2 days results take to become final, with room to catch up on missed runs.
 
 These write to Infisical's dev environment, whose bucket is only for testing.
 The production bucket, which the backfill fills, is selected with `--env=prod`:
@@ -187,7 +191,8 @@ Until its results are final, 2 days after it ends, every run checks it again, so
 Those checks bypass FastF1's cache, which would otherwise keep the first data it saw, and only write the objects that changed.
 Sessions with final results are skipped; `--overwrite` checks them again, and `--force` also exports sessions that haven't ended.
 A session FastF1 can't fully load (laps, car or position data, results or weather) isn't exported.
-Within 6 hours of its end it's taken to be still uploading, and after that it fails.
+Within 6 hours of its end it's taken to be still uploading.
+After that, a session without any laps, such as one cancelled for weather, is skipped as having no data, and any other fails.
 If that data doesn't exist upstream, `--allow-incomplete` exports it with the missing parts recorded.
 
 An event's circuit info is built when its first session is exported.

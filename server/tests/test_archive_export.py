@@ -191,6 +191,16 @@ def test_export_session_waits_for_a_session_still_uploading(partly_loading_sessi
     assert exported == []
 
 
+def test_export_session_skips_a_session_without_laps(partly_loading_session, monkeypatch):
+    archive, exported = partly_loading_session
+    cancelled = _loaded_session(laps=pd.DataFrame({"DriverNumber": []}), load=lambda **kwargs: None)
+    monkeypatch.setattr(export, "resolve_session", lambda *args: cancelled)
+    early = END + UPLOAD_WINDOW - timedelta(minutes=1)
+    assert export.export_session(archive, 2025, "r16", "R", now=early) is ExportOutcome.NOT_READY
+    assert export.export_session(archive, 2025, "r16", "R", now=END + UPLOAD_WINDOW) is ExportOutcome.NO_DATA
+    assert exported == []
+
+
 def test_export_session_allow_incomplete_records_the_failures(partly_loading_session):
     archive, exported = partly_loading_session
     outcome = export.export_session(archive, 2025, "r16", "R", allow_incomplete=True, now=END + UPLOAD_WINDOW)
