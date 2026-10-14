@@ -6,3 +6,9 @@ cache
 **/__pycache__
 **/*.pyc
 .python-version
+
+# Railway infrastructure as code (railway.ts and its SDK), not used by the app
+.railway
+node_modules
+package.json
+pnpm-lock.yaml
