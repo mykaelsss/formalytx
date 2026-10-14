@@ -15,6 +15,13 @@ that ended less than EXPORT_DELAY ago or whose end time is unknown.
 A session FastF1 fails to load completely isn't exported, since it would stay
 incomplete in the archive. Run it again later; if the data doesn't exist
 upstream, --allow-incomplete exports it with the missing parts recorded.
+
+An event's circuit info is built when its first session is exported, or a
+later one if that fails. --circuit builds only the circuit info, from the
+first finished session (or the one given) with car and position data, for
+events that have none, or for all of them with --overwrite:
+
+    infisical run -- uv run python -m app.archive 2018 r12 --circuit
 """
 
 import argparse
@@ -26,12 +33,25 @@ from collections import Counter
 import fastf1
 
 from app.archive.archive import open_archive
-from app.archive.export import IncompleteLoadError, export_session
+from app.archive.export import IncompleteLoadError, export_circuit, export_session
 from app.config import Settings
 from app.fastf1_loader import install_request_timeouts
-from app.schedule.services import get_event, get_schedule
+from app.schedule.services import CircuitInfoUnavailable, get_event, get_schedule
 
 logger = logging.getLogger("uvicorn.error")
+
+
+def _circuit_sources(year: int, event_id: str | None, identifier: str | None) -> list[tuple[str, list[str]]]:
+    """Each event with the sessions to try building its circuit info from, in order."""
+    if identifier:
+        return [(event_id, [identifier])]
+    event_ids = [event_id] if event_id else [
+        event["identifier"] for event in get_schedule(year)["events"] if event["status"] != "upcoming"
+    ]
+    return [
+        (e, [s["identifier"] for s in get_event(year, e)["sessions"] if s["status"] != "upcoming"])
+        for e in event_ids
+    ]
 
 
 def _sessions(year: int, event_id: str | None, identifier: str | None) -> list[tuple[str, str]]:
@@ -57,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow-incomplete", action="store_true", help="export sessions FastF1 can only partly load"
     )
+    parser.add_argument(
+        "--circuit", action="store_true", help="only build circuit info, for events that have none"
+    )
     args = parser.parse_args(argv)
     if args.identifier and not args.event_id:
         parser.error("identifier requires event_id")
@@ -77,25 +100,38 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("fastf1").propagate = False
 
     outcomes: Counter[str] = Counter()
-    for event_id, identifier in _sessions(args.year, args.event_id, args.identifier):
-        try:
-            outcome = export_session(
-                archive,
-                args.year,
-                event_id,
-                identifier,
-                force=args.force,
-                overwrite=args.overwrite,
-                allow_incomplete=args.allow_incomplete,
-            )
-        except IncompleteLoadError as exc:
-            logger.error("Not exporting %s %s %s: %s", args.year, event_id, identifier, exc)
-            outcomes["failed"] += 1
-        except Exception:
-            logger.exception("Failed to export %s %s %s", args.year, event_id, identifier)
-            outcomes["failed"] += 1
-        else:
-            outcomes[outcome.value] += 1
+    if args.circuit:
+        for event_id, identifiers in _circuit_sources(args.year, args.event_id, args.identifier):
+            try:
+                outcome = export_circuit(archive, args.year, event_id, identifiers, overwrite=args.overwrite)
+            except CircuitInfoUnavailable as exc:
+                logger.error("No circuit info for %s %s: %s", args.year, event_id, exc)
+                outcomes["failed"] += 1
+            except Exception:
+                logger.exception("Failed to export circuit info for %s %s", args.year, event_id)
+                outcomes["failed"] += 1
+            else:
+                outcomes[outcome.value] += 1
+    else:
+        for event_id, identifier in _sessions(args.year, args.event_id, args.identifier):
+            try:
+                outcome = export_session(
+                    archive,
+                    args.year,
+                    event_id,
+                    identifier,
+                    force=args.force,
+                    overwrite=args.overwrite,
+                    allow_incomplete=args.allow_incomplete,
+                )
+            except IncompleteLoadError as exc:
+                logger.error("Not exporting %s %s %s: %s", args.year, event_id, identifier, exc)
+                outcomes["failed"] += 1
+            except Exception:
+                logger.exception("Failed to export %s %s %s", args.year, event_id, identifier)
+                outcomes["failed"] += 1
+            else:
+                outcomes[outcome.value] += 1
 
     logger.info("Done: %s", ", ".join(f"{count} {name}" for name, count in sorted(outcomes.items())) or "nothing to export")
     return 1 if outcomes["failed"] else 0
