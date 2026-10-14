@@ -2,6 +2,7 @@
 
 Key layout (gzip-compressed JSON):
 
+    v1/{year}/schedule.json.gz
     v1/{year}/{event_id}/circuit.json.gz
     v1/{year}/{event_id}/{identifier}/session.json.gz
     v1/{year}/{event_id}/{identifier}/laps/{driver}.json.gz
@@ -21,6 +22,7 @@ from app.archive.models import (
     StoredCircuit,
     StoredDriverLaps,
     StoredLapTelemetry,
+    StoredSchedule,
     StoredSession,
 )
 from app.archive.store import BlobStore, LocalBlobStore, R2BlobStore
@@ -36,6 +38,10 @@ def _segment(value) -> str:
     if not _SEGMENT.match(text):
         raise ValueError(f"Invalid archive key segment: {text!r}")
     return text
+
+
+def schedule_key(year: int) -> str:
+    return f"v{FORMAT_VERSION}/{int(year)}/schedule.json.gz"
 
 
 def _event_prefix(year: int, event_id: str) -> str:
@@ -100,6 +106,9 @@ class SessionArchive:
             **self._store.digests(circuit_key(year, event_id)),
         }
 
+    def get_schedule(self, year: int) -> StoredSchedule | None:
+        return self._get(schedule_key(year), StoredSchedule)
+
     def get_session(self, year: int, event_id: str, identifier: str) -> StoredSession | None:
         return self._get(session_key(year, event_id, identifier), StoredSession)
 
@@ -113,6 +122,9 @@ class SessionArchive:
 
     def get_circuit(self, year: int, event_id: str) -> StoredCircuit | None:
         return self._get(circuit_key(year, event_id), StoredCircuit)
+
+    def put_schedule(self, schedule: StoredSchedule) -> bool:
+        return self._put(schedule_key(schedule.year), schedule, None)
 
     def put_session(self, session: StoredSession, *, unless: Mapping[str, str] | None = None) -> bool:
         return self._put(session_key(session.year, session.event_id, session.identifier), session, unless)
