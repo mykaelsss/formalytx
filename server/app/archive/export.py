@@ -35,6 +35,7 @@ from app.schedule.services import (
     SESSION_DURATION_MINUTES,
     SESSION_NAME_TO_IDENTIFIER,
     CircuitInfoUnavailable,
+    NoCircuitLayout,
     build_circuit_info,
 )
 from app.utils import resolve_session
@@ -349,8 +350,12 @@ def _driver_order(session: Session, drivers: list[StoredDriver]) -> list[str]:
 
 
 def _build_circuit(session: Session, year: int, event_id: str) -> StoredCircuit | None:
+    """The session's circuit info, or None (logged) when it can't be built from
+    this session. Raises NoCircuitLayout, which no session of the event avoids."""
     try:
         return StoredCircuit.model_validate(build_circuit_info(session))
+    except NoCircuitLayout:
+        raise
     except CircuitInfoUnavailable as exc:
         logger.warning("Could not build circuit info for %s %s: %s", year, event_id, exc)
     except Exception:
@@ -410,7 +415,11 @@ def export_loaded_session(
         # its telemetry is missing upstream.
         first_session = session.name == session.event.get("Session1")
         if telemetry_loaded and (first_session or archive.get_circuit(year, event_id) is None):
-            circuit = _build_circuit(session, year, event_id)
+            try:
+                circuit = _build_circuit(session, year, event_id)
+            except NoCircuitLayout as exc:
+                logger.warning("Could not build circuit info for %s %s: %s", year, event_id, exc)
+                circuit = None
             if circuit is not None:
                 uploads.append(pool.submit(archive.put_circuit, year, event_id, circuit))
 
@@ -535,7 +544,8 @@ def export_circuit(
     """Build an event's circuit info from the first of the given sessions that
     has a lap with car and position data, without exporting the sessions.
 
-    Raises CircuitInfoUnavailable when none of them has one.
+    Raises CircuitInfoUnavailable when none of them has one, or NoCircuitLayout
+    as soon as one finds FastF1 has no layout of the circuit.
     """
     if not overwrite and archive.get_circuit(year, event_id) is not None:
         logger.info("Skipping circuit info for %s %s: already exported", year, event_id)

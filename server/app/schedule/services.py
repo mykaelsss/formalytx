@@ -276,6 +276,10 @@ def get_circuit_info(year: int, event_id: str):
 class CircuitInfoUnavailable(Exception):
     """The session has nothing to build the circuit info from."""
 
+class NoCircuitLayout(CircuitInfoUnavailable):
+    """FastF1 has no layout for the circuit, so no session of the event has
+    circuit info, e.g. at a circuit new to MultiViewer."""
+
 _REFERENCE_LAP_ATTEMPTS = 20
 
 def _has_telemetry(lap: Lap) -> bool:
@@ -323,14 +327,19 @@ def build_circuit_info(session: Session) -> dict:
     """Circuit layout from a session loaded with laps and telemetry.
 
     Raises CircuitInfoUnavailable when no lap has both car and position data,
-    e.g. when the session's telemetry is missing upstream.
+    e.g. when the session's telemetry is missing upstream, and NoCircuitLayout
+    when FastF1 has no layout of the circuit.
     """
+    # Checked first: it's quicker than finding a reference lap, and holds for
+    # every session of the event.
+    circuit_key = _circuit_key(session)
+    circuit_info = get_mv_circuit_info(year=session.event.year, circuit_key=circuit_key)
+    if circuit_info is None:
+        name = session.session_info["Meeting"]["Circuit"]["ShortName"]
+        raise NoCircuitLayout(f"FastF1 has no layout of {name} (circuit key {circuit_key}) for {session.event.year}")
     reference_lap = _reference_lap(session)
     if reference_lap is None:
         raise CircuitInfoUnavailable(f"none of the fastest laps of {session} has usable car and position data")
-    circuit_info = get_mv_circuit_info(year=session.event.year, circuit_key=_circuit_key(session))
-    if circuit_info is None:
-        raise CircuitInfoUnavailable(f"FastF1 has no circuit info for {session}")
     circuit_info.add_marker_distance(reference_lap=reference_lap)
 
     sector_distances = []

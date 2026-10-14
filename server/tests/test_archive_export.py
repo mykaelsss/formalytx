@@ -28,7 +28,7 @@ from app.archive.export import (
     skip_reason,
 )
 from app.caching import SETTLE_BUFFER
-from app.schedule.services import CircuitInfoUnavailable
+from app.schedule.services import CircuitInfoUnavailable, NoCircuitLayout
 
 END = datetime(2025, 9, 7, 15, 0, tzinfo=timezone.utc)
 
@@ -264,6 +264,19 @@ def test_export_circuit_keeps_existing_circuit_info(sessions_with_telemetry):
     assert (archive.circuit, loaded) == ("existing", [])
     assert export.export_circuit(archive, 2018, "r12", ["FP1"], overwrite=True) is ExportOutcome.EXPORTED
     assert archive.circuit == "from FP1"
+
+
+def test_export_circuit_stops_without_a_layout(sessions_with_telemetry, monkeypatch):
+    _, loaded = sessions_with_telemetry
+
+    def no_layout(session, *args):
+        raise NoCircuitLayout("FastF1 has no layout of Madring (circuit key 153) for 2026")
+
+    monkeypatch.setattr(export, "_build_circuit", no_layout)
+    archive = _CircuitArchive()
+    with pytest.raises(NoCircuitLayout, match="Madring"):
+        export.export_circuit(archive, 2026, "r14", ["FP1", "FP2"])
+    assert (archive.circuit, loaded) == (None, ["FP1"])
 
 
 def test_export_circuit_without_telemetry(sessions_with_telemetry):

@@ -88,10 +88,31 @@ def test_no_reference_lap_without_telemetry(monkeypatch):
     assert services._reference_lap(_session_with_laps([("VER", 80.0)], car_data=False)) is None
 
 
+def _with_layout(monkeypatch, layout):
+    monkeypatch.setattr(services, "_circuit_key", lambda session: 153)
+    monkeypatch.setattr(services, "get_mv_circuit_info", lambda **kwargs: layout)
+
+
+def _session_at_madring():
+    session = _session_with_laps([("VER", 80.0)])
+    session.event = SimpleNamespace(year=2026)
+    session.session_info = {"Meeting": {"Circuit": {"Key": 153, "ShortName": "Madring"}}}
+    return session
+
+
 def test_build_circuit_info_without_a_reference_lap(monkeypatch):
     _with_telemetry(monkeypatch)
-    with pytest.raises(services.CircuitInfoUnavailable, match="car and position data"):
-        services.build_circuit_info(_session_with_laps([("VER", 80.0)]))
+    _with_layout(monkeypatch, SimpleNamespace())
+    with pytest.raises(services.CircuitInfoUnavailable, match="car and position data") as raised:
+        services.build_circuit_info(_session_at_madring())
+    assert not isinstance(raised.value, services.NoCircuitLayout)
+
+
+def test_build_circuit_info_without_a_layout(monkeypatch):
+    _with_telemetry(monkeypatch, "VER")
+    _with_layout(monkeypatch, None)
+    with pytest.raises(services.NoCircuitLayout, match=r"Madring \(circuit key 153\) for 2026"):
+        services.build_circuit_info(_session_at_madring())
 
 
 def test_reference_lap_gives_up_after_a_few_laps(monkeypatch):
