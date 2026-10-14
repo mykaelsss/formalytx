@@ -94,7 +94,7 @@ Why: FastF1 assigns `RoundNumber = 0` to every testing event in a season, so rou
 - F1 data is sourced from FastF1, and finished sessions are exported once into the session archive (see [Session archive](#session-archive)).
 - Request → route → service → the archive, through `app/archive/reader.py`.
   Each request reads only the objects it needs: the session summary, then one object per driver for laps or one per lap for telemetry, fetched in parallel.
-- Sessions that aren't archived yet (live, just finished, or missing from the archive) fall back to FastF1 through `resolve_session` (in `app/utils.py`).
+- Sessions that aren't archived yet (live, just uploaded and waiting for the next export, or missing from the archive) fall back to FastF1 through `resolve_session` (in `app/utils.py`).
 - FastF1 sessions are loaded via `locked_load` in `app/fastf1_loader.py`.
   A per-key lock (via `KeyLockRegistry` in `app/utils.py`) serializes concurrent loads of the same session, so only the first fetches it upstream.
   Loaded sessions aren't kept in memory, since each holds a few hundred MB: each request loads its session again from FastF1's on-disk cache.
@@ -173,7 +173,11 @@ cd server
 infisical run -- uv run python -m app.archive 2025          # every finished session of 2025
 infisical run -- uv run python -m app.archive 2025 r16      # every session of one event
 infisical run -- uv run python -m app.archive 2025 r16 R    # one session
+infisical run -- uv run python -m app.archive --recent      # this year's events under way or ended in the last week
 ```
+
+The year defaults to the current one.
+`--recent` is what the scheduled export runs: the week covers the 2 days results take to become final, with room to catch up on missed runs.
 
 These write to Infisical's dev environment, whose bucket is only for testing.
 The production bucket, which the backfill fills, is selected with `--env=prod`:
@@ -182,9 +186,13 @@ The production bucket, which the backfill fills, is selected with `--env=prod`:
 infisical run --env=prod -- uv run python -m app.archive 2025
 ```
 
-Sessions already exported are skipped unless their results have since become final.
-`--overwrite` exports them again, and `--force` also exports sessions that ended less than 6 hours ago.
+A session is exported as soon as it has ended and FastF1 can fully load it.
+Until its results are final, 2 days after it ends, every run checks it again, so it picks up a partial upload being completed and later penalties.
+Those checks bypass FastF1's cache, which would otherwise keep the first data it saw, and only write the objects that changed.
+Sessions with final results are skipped; `--overwrite` checks them again, and `--force` also exports sessions that haven't ended.
 A session FastF1 can't fully load (laps, car or position data, results or weather) isn't exported.
+Within 6 hours of its end it's taken to be still uploading.
+After that, a session without any laps, such as one cancelled for weather, is skipped as having no data, and any other fails.
 If that data doesn't exist upstream, `--allow-incomplete` exports it with the missing parts recorded.
 
 An event's circuit info is built when its first session is exported.

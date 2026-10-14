@@ -19,9 +19,6 @@ ENV PYTHONUNBUFFERED=1
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
 
-# Copy from the cache instead of linking since it's a mounted volume
-ENV UV_LINK_MODE=copy
-
 # Omit development dependencies
 ENV UV_NO_DEV=1
 
@@ -30,18 +27,16 @@ ENV UV_TOOL_BIN_DIR=/usr/local/bin
 
 # Install the project's dependencies using the lockfile and settings.
 # Copying only the lockfile + manifest first keeps this layer cached unless
-# they change. The uv cache mount persists downloaded wheels across builds.
-# Railway statically validates the id (before build-arg expansion) and requires
-# the literal "s/<service-id>-<target>" form, so the service id is hardcoded.
+# they change. No uv cache mount: Railway ties a cache mount's id to a single
+# service, and the API and the scheduled export build from this same file.
+# --no-cache keeps uv's download cache out of the image.
 COPY uv.lock pyproject.toml ./
-RUN --mount=type=cache,id=s/13f86a63-4844-4886-b61b-0ea0593e5f6c-/root/.cache/uv,target=/root/.cache/uv \
-    uv sync --locked --no-install-project
+RUN uv sync --locked --no-install-project --no-cache
 
 # Then, add the rest of the project source code and install it
 # Installing separately from its dependencies allows optimal layer caching
 COPY . /app
-RUN --mount=type=cache,id=s/13f86a63-4844-4886-b61b-0ea0593e5f6c-/root/.cache/uv,target=/root/.cache/uv \
-    uv sync --locked
+RUN uv sync --locked --no-cache
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
