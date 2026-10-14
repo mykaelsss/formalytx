@@ -213,13 +213,18 @@ A run with nothing new takes a couple of seconds and writes nothing.
 A session FastF1 can't fully load is retried on every run until its results are final, then archived with what loaded (`--allow-incomplete-when-final`).
 A run exits with an error only when a session failed with one, such as R2 or FastF1 being unreachable; the next run retries it.
 
-The service is built from `server/` like the API, and its settings live in `server/railway.cron.toml`.
-To set it up:
+The service, `formalytx-cron`, is built from `server/` like the API and configured in the Railway dashboard, since Railway's Config as Code is deprecated and new services can't use it.
+Its settings:
 
-1. Add a service from this repository with the root directory `/server`.
-2. Under Settings > Config-as-code, set the config file to `/server/railway.cron.toml`.
-3. Give it the API's R2 variables (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`) from Infisical's prod environment.
+| Setting | Value |
+|---|---|
+| Root directory | `/server` |
+| Custom start command | `/usr/local/bin/docker-entrypoint.sh python -m app.archive --recent --allow-incomplete-when-final` |
+| Cron schedule | `*/15 * * * *` (UTC; a run still going when the next is due makes Railway skip that one) |
+| Restart policy | Never (the next scheduled run retries) |
+| Variables | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`, as references to the API service's (e.g. `${{formalytx.R2_BUCKET}}`) |
 
+The start command calls the image's entrypoint itself, since a start command replaces it, and the entrypoint is what drops to the `nonroot` user.
 It needs no volume or domain: FastF1's cache only lasts for one run.
 
 ### Frontend
