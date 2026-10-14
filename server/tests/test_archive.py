@@ -2,7 +2,7 @@ import gzip
 import hashlib
 import io
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import boto3
@@ -17,6 +17,7 @@ from app.archive.archive import (
     driver_laps_key,
     lap_telemetry_key,
     open_archive,
+    schedule_key,
     session_key,
 )
 from app.archive.models import (
@@ -28,9 +29,14 @@ from app.archive.models import (
     StoredLap,
     StoredLapTelemetry,
     StoredPosData,
+    StoredSchedule,
+    StoredScheduleEvent,
+    StoredScheduleSession,
     StoredSession,
 )
 from app.archive.store import LocalBlobStore, R2BlobStore
+
+_CEST = timezone(timedelta(hours=2))
 
 
 def _session(**overrides) -> StoredSession:
@@ -54,6 +60,37 @@ def _session(**overrides) -> StoredSession:
     )
     values.update(overrides)
     return StoredSession(**values)
+
+
+def _schedule_event(**overrides) -> StoredScheduleEvent:
+    values = dict(
+        round=16,
+        event_id="r16",
+        name="Italian Grand Prix",
+        official_name="FORMULA 1 PIRELLI GRAN PREMIO D'ITALIA 2025",
+        country="Italy",
+        location="Monza",
+        date="2025-09-07",
+        format="conventional",
+        sessions=[
+            StoredScheduleSession(name="Practice 1", start=datetime(2025, 9, 5, 13, 30, tzinfo=_CEST)),
+            StoredScheduleSession(name="Qualifying", start=datetime(2025, 9, 6, 16, tzinfo=_CEST)),
+            StoredScheduleSession(name="Race", start=datetime(2025, 9, 7, 15, tzinfo=_CEST)),
+        ],
+    )
+    values.update(overrides)
+    return StoredScheduleEvent(**values)
+
+
+def _schedule(*events: StoredScheduleEvent, **overrides) -> StoredSchedule:
+    values = dict(
+        exported_at=datetime(2025, 9, 8, tzinfo=timezone.utc),
+        fastf1_version="3.8.2",
+        year=2025,
+        events=list(events) or [_schedule_event()],
+    )
+    values.update(overrides)
+    return StoredSchedule(**values)
 
 
 def _lap(**overrides) -> StoredLap:
@@ -85,6 +122,7 @@ def test_keys():
     assert driver_laps_key(2025, "r16", "Q", "ver") == "v1/2025/r16/Q/laps/VER.json.gz"
     assert lap_telemetry_key(2025, "r16", "Q", "VER", 7) == "v1/2025/r16/Q/telemetry/VER/7.json.gz"
     assert circuit_key(2025, "t1") == "v1/2025/t1/circuit.json.gz"
+    assert schedule_key(2025) == "v1/2025/schedule.json.gz"
 
 
 def test_session_named_identifier_key():
@@ -110,6 +148,7 @@ def test_missing_objects_are_none(archive):
     assert archive.get_driver_laps(2025, "r16", "R", "VER") is None
     assert archive.get_lap_telemetry(2025, "r16", "R", "VER", 1) is None
     assert archive.get_circuit(2025, "r16") is None
+    assert archive.get_schedule(2025) is None
 
 
 def test_round_trips(archive):
@@ -127,11 +166,13 @@ def test_round_trips(archive):
     archive.put_driver_laps(2025, "r16", "R", laps)
     archive.put_lap_telemetry(2025, "r16", "R", telemetry)
     archive.put_circuit(2025, "r16", circuit)
+    archive.put_schedule(_schedule())
 
     assert archive.get_session(2025, "r16", "R") == session
     assert archive.get_driver_laps(2025, "r16", "R", "VER") == laps
     assert archive.get_lap_telemetry(2025, "r16", "R", "VER", 10) == telemetry
     assert archive.get_circuit(2025, "r16") == circuit
+    assert archive.get_schedule(2025) == _schedule()
 
 
 def test_objects_are_gzipped_json(tmp_path, archive):
@@ -278,3 +319,9 @@ def test_r2_digests_are_etags(r2):
         {"Bucket": "formalytx-data", "Prefix": "v1/a/"},
     )
     assert store.digests("v1/a/") == {"v1/a/b.json.gz": "8d777f385d3dfec8815d20f7496026dc"}
+
+
+def test_schedule_keeps_local_start_times(archive):
+    archive.put_schedule(_schedule())
+    start = archive.get_schedule(2025).events[0].sessions[0].start
+    assert (start.hour, start.utcoffset()) == (13, timedelta(hours=2))

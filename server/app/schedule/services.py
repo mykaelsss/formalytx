@@ -4,14 +4,21 @@ import logging
 import fastf1
 import numpy as np
 import pandas as pd
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from fastf1.core import Lap, Session
 from fastf1.exceptions import DataNotLoadedError
 from fastf1.mvapi import get_circuit_info as get_mv_circuit_info
 from dataclasses import dataclass
 from app.archive import reader
-from app.archive.models import StoredDriver, StoredSession, StoredWeather
-from app.utils import ExpiringLRU, KeyLockRegistry, format_lap_time, format_seconds, resolve_event, resolve_session
+from app.archive.models import (
+    StoredDriver,
+    StoredSchedule,
+    StoredScheduleEvent,
+    StoredScheduleSession,
+    StoredSession,
+    StoredWeather,
+)
+from app.utils import ExpiringLRU, KeyLockRegistry, format_lap_time, format_seconds, parse_event_id, resolve_session
 
 from app.fastf1_loader import locked_load
 
@@ -45,33 +52,83 @@ SESSION_DURATION_MINUTES = {
 # Testing days run all day, not for a regular session's length.
 TESTING_SESSION_MINUTES = 9 * 60
 
-def get_schedule(year: int):
-    schedule = fastf1.get_event_schedule(year)
+def fastf1_season(year: int, *, backend: str | None = None) -> StoredSchedule:
+    """The season's schedule from FastF1, in the archive's format.
+
+    backend picks FastF1's data source; by default it falls back to others,
+    which can have less detail, when its own fails.
+    """
+    schedule = fastf1.get_event_schedule(year, backend=backend)
     events = []
-    test_events = 1
-
+    tests = 0
     for _, event in schedule.iterrows():
-        status = _event_status(event["EventDate"], start_date=event.get("Session1DateUtc"))
-        round_num = int(event["RoundNumber"])
-        event_format = event["EventFormat"]
-        identifier = ''
-        if event_format == "testing":
-            identifier = f"t{test_events}"
-            test_events += 1
+        if event["EventFormat"] == "testing":
+            tests += 1
+            event_id = f"t{tests}"
         else:
-            identifier = f"r{round_num}"
+            event_id = f"r{int(event['RoundNumber'])}"
+        sessions = []
+        for i in range(1, 6):
+            name = event.get(f"Session{i}")
+            start = event.get(f"Session{i}Date")
+            if not name or str(name).strip() == "" or start is None or pd.isna(start):
+                continue
+            sessions.append(StoredScheduleSession(name=str(name), start=pd.Timestamp(start).to_pydatetime()))
+        official_name = event.get("OfficialEventName")
+        events.append(StoredScheduleEvent(
+            round=int(event["RoundNumber"]),
+            event_id=event_id,
+            name=str(event["EventName"]),
+            official_name=None if official_name is None or pd.isna(official_name) else str(official_name),
+            country=str(event["Country"]),
+            location=str(event["Location"]),
+            date=str(event["EventDate"].date()),
+            format=str(event["EventFormat"]),
+            sessions=sessions,
+        ))
+    return StoredSchedule(
+        exported_at=datetime.now(timezone.utc),
+        fastf1_version=fastf1.__version__,
+        year=year,
+        events=events,
+    )
 
+def season(year: int) -> StoredSchedule:
+    """The season's schedule: from the archive, which the export keeps up to
+    date, or from FastF1 for a season it doesn't have."""
+    archive = reader.current()
+    stored = archive.schedule(year) if archive is not None else None
+    return stored if stored is not None else fastf1_season(year)
+
+def find_event(schedule: StoredSchedule, event_id: str) -> StoredScheduleEvent:
+    parse_event_id(event_id)
+    for event in schedule.events:
+        if event.event_id == event_id:
+            return event
+    raise ValueError(f"The {schedule.year} season has no event {event_id}")
+
+def _utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+def _event_day(event: StoredScheduleEvent) -> datetime:
+    return datetime.combine(date.fromisoformat(event.date), datetime.min.time(), tzinfo=timezone.utc)
+
+def get_schedule(year: int, schedule: StoredSchedule | None = None):
+    schedule = schedule if schedule is not None else season(year)
+    events = []
+    for event in schedule.events:
+        first = _utc(event.sessions[0].start) if event.sessions else None
         events.append({
-            "round": round_num,
-            "identifier": identifier,
-            "country": event["Country"],
-            "location": event["Location"],
-            "official_event_name": event['OfficialEventName'],
-            "event_name": event["EventName"],
-            "event_date_start": str(event["Session1DateUtc"].date()) if event.get("Session1DateUtc") is not None else str(event["EventDate"].date()),
-            "event_date_end": str(event["EventDate"].date()),
-            "event_format": event["EventFormat"],
-            "status": status,
+            "round": event.round,
+            "identifier": event.event_id,
+            "country": event.country,
+            "location": event.location,
+            "official_event_name": event.official_name,
+            "event_name": event.name,
+            "event_date_start": str(first.date()) if first is not None else event.date,
+            "event_date_end": event.date,
+            "event_format": event.format,
+            "status": _event_status(_event_day(event), start_date=first),
         })
 
     return {"year": year, "events": events}
@@ -490,89 +547,49 @@ def build_circuit_info(session: Session) -> dict:
         "sector_distances": sector_distances,
     }
 
-def get_event(year: int, event_id: str):
-    event = resolve_event(year, event_id)
-    sessions = _get_event_sessions(event)
-
-    return {
-        "round": int(event["RoundNumber"]),
-        "year": year,
-        "name": event["EventName"],
-        "country": event["Country"],
-        "location": event["Location"],
-        "date": str(event["EventDate"].date()),
-        "format": event["EventFormat"],
-        "sessions": sessions,
-    }
+def get_event(year: int, event_id: str, schedule: StoredSchedule | None = None):
+    event = find_event(schedule if schedule is not None else season(year), event_id)
+    return _event_response(year, event, _event_sessions(event))
 
 def get_event_detailed(year: int, event_id: str, config: SessionDetailConfig = SessionDetailConfig()):
-    event = resolve_event(year, event_id)
-    round_num = int(event["RoundNumber"])
-    sessions = _get_event_sessions_detailed(event, year, event_id, config)
+    event = find_event(season(year), event_id)
+    sessions = _event_sessions(event)
+    _add_session_details(sessions, year, event_id, config)
+    return _event_response(year, event, sessions)
 
+def _event_response(year: int, event: StoredScheduleEvent, sessions: list[dict]) -> dict:
     return {
-        "round": round_num,
+        "round": event.round,
         "year": year,
-        "name": event["EventName"],
-        "country": event["Country"],
-        "location": event["Location"],
-        "date": str(event["EventDate"].date()),
-        "format": event["EventFormat"],
+        "name": event.name,
+        "country": event.country,
+        "location": event.location,
+        "date": event.date,
+        "format": event.format,
         "sessions": sessions,
     }
 
-def _get_event_sessions(event):
+def _event_sessions(event: StoredScheduleEvent) -> list[dict]:
     sessions = []
-    for i in range(1, 6):
-        name = event.get(f"Session{i}")
-        date = event.get(f"Session{i}Date")
-        if not name or str(name).strip() == "":
-            continue
-        if pd.isna(date):
-            continue
-        identifier = SESSION_NAME_TO_IDENTIFIER.get(name, name)
-        start_time = str(date.time())[:5]
-        duration = SESSION_DURATION_MINUTES.get(identifier, 60)
-        end_dt = date + timedelta(minutes=duration)
-        end_time = str(end_dt.time())[:5] if end_dt else None
-        status = _event_status(end_dt, start_date=date)
-
+    for session in event.sessions:
+        # Local times, as the circuit's schedule shows them.
+        start = session.start
+        identifier = SESSION_NAME_TO_IDENTIFIER.get(session.name, session.name)
+        end = start + timedelta(minutes=SESSION_DURATION_MINUTES.get(identifier, 60))
         sessions.append({
-            "name": name,
+            "name": session.name,
             "identifier": identifier,
-            "date": str(date.date()),
-            "start_time": start_time,
-            "end_time": end_time,
-            "status": status,
+            "date": str(start.date()),
+            "start_time": str(start.time())[:5],
+            "end_time": str(end.time())[:5],
+            "status": _event_status(end, start_date=start),
         })
     return sessions
 
-def _get_event_sessions_detailed(event, year: int, event_id: str, config: SessionDetailConfig):
-    sessions = []
-    for i in range(1, 6):
-        name = event.get(f"Session{i}")
-        date = event.get(f"Session{i}Date")
-        if not name or str(name).strip() == "":
-            continue
-        if pd.isna(date):
-            continue
-        identifier = SESSION_NAME_TO_IDENTIFIER.get(name, name)
-        start_time = str(date.time())[:5]
-        duration = SESSION_DURATION_MINUTES.get(identifier, 60)
-        end_dt = date + timedelta(minutes=duration)
-        end_time = str(end_dt.time())[:5] if end_dt else None
-        status = _event_status(end_dt, start_date=date)
-        sessions.append({
-            "name": name,
-            "identifier": identifier,
-            "date": str(date.date()),
-            "start_time": start_time,
-            "end_time": end_time,
-            "status": status,
-            "weather": None,
-            "fastest_lap": None,
-        })
-
+def _add_session_details(sessions: list[dict], year: int, event_id: str, config: SessionDetailConfig) -> None:
+    for s in sessions:
+        s["weather"] = None
+        s["fastest_lap"] = None
     completed = [s["identifier"] for s in sessions if s["status"] == "completed"]
     if completed and (config.weather or config.laps):
         archive = reader.current()
@@ -584,7 +601,6 @@ def _get_event_sessions_detailed(event, year: int, event_id: str, config: Sessio
                 s["weather"], s["fastest_lap"] = _session_data_from_archive(stored[s["identifier"]], config)
             else:
                 s["weather"], s["fastest_lap"] = _get_session_data(year, event_id, s["identifier"], config)
-    return sessions
 
 
 def _mean(values: list[float | None]) -> float | None:

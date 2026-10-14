@@ -25,6 +25,40 @@ class StoredEvent(BaseModel):
     format: str
 
 
+class StoredScheduleSession(BaseModel):
+    name: str
+    # In the circuit's local time, with its UTC offset.
+    start: datetime
+
+
+class StoredScheduleEvent(BaseModel):
+    round: int
+    # r{round}, or t{n} for the season's n-th testing event, which has no round.
+    event_id: str
+    name: str
+    official_name: str | None
+    country: str
+    location: str
+    date: str
+    format: str
+    sessions: list[StoredScheduleSession]
+
+
+class StoredSchedule(BaseModel):
+    """A season's events as FastF1's schedule had them when exported.
+
+    Events can still move or be replaced during the season, so the current
+    season is exported again on every run. Statuses aren't stored: they're
+    worked out from the dates when serving.
+    """
+
+    format_version: Literal[1] = FORMAT_VERSION
+    exported_at: datetime
+    fastf1_version: str
+    year: int
+    events: list[StoredScheduleEvent]
+
+
 class StoredDriver(BaseModel):
     number: str
     abbreviation: str | None

@@ -3,19 +3,28 @@
 Every request first needs its session's session.json, both as the proof that
 the session is archived and for its drivers, so those are kept in a small
 in-process cache. Copies whose results aren't final yet are re-read after a
-while, to pick up the final export. Laps and telemetry objects aren't cached
-here: each is read once per request and Cloudflare caches the responses.
+while, to pick up the final export. Season schedules are cached the same way:
+past seasons for good, and the current one re-read after a while, since its
+events can still change. Laps and telemetry objects aren't cached here: each is
+read once per request and Cloudflare caches the responses.
 """
 
 import logging
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import TypeVar
 
 from botocore.exceptions import BotoCoreError, ClientError
 
 from app.archive.archive import SessionArchive
-from app.archive.models import StoredCircuit, StoredDriverLaps, StoredLapTelemetry, StoredSession
+from app.archive.models import (
+    StoredCircuit,
+    StoredDriverLaps,
+    StoredLapTelemetry,
+    StoredSchedule,
+    StoredSession,
+)
 from app.utils import ExpiringLRU
 
 logger = logging.getLogger("uvicorn.error")
@@ -35,12 +44,14 @@ class ArchiveReader:
         *,
         session_cache_size: int = 256,
         circuit_cache_size: int = 128,
+        schedule_cache_size: int = 32,
         unsettled_ttl_seconds: float = 600,
         workers: int = 32,
     ):
         self._archive = archive
         self._sessions = ExpiringLRU(session_cache_size)
         self._circuits = ExpiringLRU(circuit_cache_size)
+        self._schedules = ExpiringLRU(schedule_cache_size)
         self._unsettled_ttl = unsettled_ttl_seconds
         self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="archive-read")
 
@@ -55,6 +66,17 @@ class ArchiveReader:
         if len(keys) == 1:
             return {keys[0]: self._read(fn, *keys[0])}
         return dict(zip(keys, self._pool.map(lambda key: self._read(fn, *key), keys)))
+
+    def schedule(self, year: int) -> StoredSchedule | None:
+        """The season's exported schedule, or None when it isn't archived."""
+        key = (year,)
+        schedule = self._schedules.get(key)
+        if schedule is None:
+            schedule = self._read(self._archive.get_schedule, year)
+            if schedule is not None:
+                past = year < datetime.now(timezone.utc).year
+                self._schedules.put(key, schedule, None if past else self._unsettled_ttl)
+        return schedule
 
     def session(self, year: int, event_id: str, identifier: str) -> StoredSession | None:
         """The exported session, or None when it isn't archived."""

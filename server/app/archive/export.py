@@ -1,4 +1,4 @@
-"""Export a finished session from FastF1 into the archive."""
+"""Export finished sessions, and the season's schedule, from FastF1 into the archive."""
 
 import enum
 import logging
@@ -27,6 +27,7 @@ from app.archive.models import (
     StoredLap,
     StoredLapTelemetry,
     StoredPosData,
+    StoredSchedule,
     StoredSession,
     StoredWeather,
 )
@@ -568,6 +569,23 @@ def export_session(
     return export_loaded_session(
         archive, session, year, event_id, identifier, now=now, existing=existing, load_failures=failures
     )
+
+
+def export_schedule(archive: SessionArchive, schedule: StoredSchedule) -> ExportOutcome:
+    """Write the season's schedule, unless the archive has it already."""
+    existing = archive.get_schedule(schedule.year)
+    # exported_at always differs, so the schedule is only compared without it.
+    # Compared as JSON, so a session moved to another UTC offset counts too.
+    if existing is not None and (
+        schedule.model_dump_json(exclude={"exported_at"}) == existing.model_dump_json(exclude={"exported_at"})
+    ):
+        logger.info(
+            "Unchanged %s schedule since %s", schedule.year, existing.exported_at.isoformat(timespec="minutes")
+        )
+        return ExportOutcome.UNCHANGED
+    archive.put_schedule(schedule)
+    logger.info("Exported the %s schedule: %d events", schedule.year, len(schedule.events))
+    return ExportOutcome.EXPORTED
 
 
 @contextmanager

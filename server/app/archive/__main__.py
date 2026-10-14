@@ -38,6 +38,14 @@ first finished session (or the one given) with car and position data, for
 events that have none, or for all of them with --overwrite:
 
     infisical run -- uv run python -m app.archive 2018 r12 --circuit
+
+Every run that exports sessions first exports the season's schedule, which the
+API serves the season's events from, writing it only when it changed. Events
+can move or be replaced during a season, so the scheduled export keeps the
+current one up to date. --schedule exports only the schedule, e.g. to add a
+past season's:
+
+    infisical run -- uv run python -m app.archive 2018 --schedule
 """
 
 import argparse
@@ -50,10 +58,11 @@ from datetime import date, datetime, timedelta, timezone
 import fastf1
 
 from app.archive.archive import open_archive
-from app.archive.export import IncompleteLoadError, export_circuit, export_session
+from app.archive.export import IncompleteLoadError, export_circuit, export_schedule, export_session
+from app.archive.models import StoredSchedule
 from app.config import Settings
 from app.fastf1_loader import install_request_timeouts
-from app.schedule.services import CircuitInfoUnavailable, get_event, get_schedule
+from app.schedule.services import CircuitInfoUnavailable, fastf1_season, get_event, get_schedule
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -77,20 +86,25 @@ def _circuit_sources(year: int, event_id: str | None, identifier: str | None) ->
 
 
 def _sessions(
-    year: int, event_id: str | None, identifier: str | None, *, ended_since: date | None = None
+    year: int,
+    event_id: str | None,
+    identifier: str | None,
+    *,
+    ended_since: date | None = None,
+    schedule: StoredSchedule | None = None,
 ) -> list[tuple[str, str]]:
     """Sessions to export, of events that have started and, with ended_since,
     haven't ended before that day."""
     if identifier:
         return [(event_id, identifier)]
     if event_id:
-        return [(event_id, s["identifier"]) for s in get_event(year, event_id)["sessions"]]
+        return [(event_id, s["identifier"]) for s in get_event(year, event_id, schedule)["sessions"]]
     return [
         (event["identifier"], s["identifier"])
-        for event in get_schedule(year)["events"]
+        for event in get_schedule(year, schedule)["events"]
         if event["status"] != "upcoming"
         and (ended_since is None or date.fromisoformat(event["event_date_end"]) >= ended_since)
-        for s in get_event(year, event["identifier"])["sessions"]
+        for s in get_event(year, event["identifier"], schedule)["sessions"]
     ]
 
 
@@ -115,11 +129,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--recent", action="store_true", help=f"only events under way or ended in the last {RECENT.days} days"
     )
+    parser.add_argument("--schedule", action="store_true", help="only export the season's schedule")
     args = parser.parse_args(argv)
     if args.identifier and not args.event_id:
         parser.error("identifier requires event_id")
     if args.recent and (args.event_id or args.circuit):
         parser.error("--recent picks the events itself, and only exports sessions")
+    if args.schedule and (args.event_id or args.circuit or args.recent):
+        parser.error("--schedule only exports the season's schedule")
     now = datetime.now(timezone.utc)
     year = now.year if args.year is None else args.year
 
@@ -139,6 +156,18 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("fastf1").propagate = False
 
     outcomes: Counter[str] = Counter()
+    schedule = None
+    if not args.circuit:
+        try:
+            # Only from FastF1's own backend: the others it falls back to can
+            # have less detail, which shouldn't replace the exported schedule.
+            schedule = fastf1_season(year, backend="fastf1")
+            outcome = export_schedule(archive, schedule)
+        except Exception:
+            logger.exception("Failed to export the %s schedule", year)
+            outcomes["failed"] += 1
+        else:
+            outcomes[f"schedule {outcome.value}"] += 1
     if args.circuit:
         for event_id, identifiers in _circuit_sources(year, args.event_id, args.identifier):
             try:
@@ -151,9 +180,10 @@ def main(argv: list[str] | None = None) -> int:
                 outcomes["failed"] += 1
             else:
                 outcomes[outcome.value] += 1
-    else:
+    elif not args.schedule:
         ended_since = (now - RECENT).date() if args.recent else None
-        for event_id, identifier in _sessions(year, args.event_id, args.identifier, ended_since=ended_since):
+        sessions = _sessions(year, args.event_id, args.identifier, ended_since=ended_since, schedule=schedule)
+        for event_id, identifier in sessions:
             try:
                 outcome = export_session(
                     archive,

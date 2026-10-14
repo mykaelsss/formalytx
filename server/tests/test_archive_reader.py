@@ -7,7 +7,9 @@ from app.archive.archive import SessionArchive
 from app.archive.models import StoredCircuit, StoredDriverLaps
 from app.archive.reader import ArchiveReader, ArchiveUnavailable
 from app.archive.store import LocalBlobStore
-from tests.test_archive import _lap, _session, _telemetry
+from freezegun import freeze_time
+
+from tests.test_archive import _lap, _schedule, _schedule_event, _session, _telemetry
 
 
 class _CountingArchive(SessionArchive):
@@ -128,3 +130,37 @@ def test_read_errors_become_archive_unavailable(archive, reader, monkeypatch):
         reader.session(2025, "r16", "R")
     with pytest.raises(ArchiveUnavailable):
         reader.lap_telemetry(_session(), [("VER", 10), ("VER", 11)])
+
+
+def test_missing_schedule_is_not_cached(archive, reader):
+    assert reader.schedule(2025) is None
+    archive.put_schedule(_schedule())
+    assert reader.schedule(2025) == _schedule()
+
+
+@freeze_time("2026-10-14 12:00:00")
+def test_past_season_schedule_does_not_expire(archive, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr("app.utils.time.monotonic", lambda: now[0])
+    reader = ArchiveReader(archive, unsettled_ttl_seconds=600)
+    archive.put_schedule(_schedule())
+    reader.schedule(2025)
+    now[0] += 10 * 24 * 3600
+    reader.schedule(2025)
+    assert len(archive.reads) == 1
+
+
+@freeze_time("2025-09-10 12:00:00")
+def test_current_season_schedule_is_read_again_later(archive, monkeypatch):
+    """Events can still move or be replaced during the season."""
+    now = [1000.0]
+    monkeypatch.setattr("app.utils.time.monotonic", lambda: now[0])
+    reader = ArchiveReader(archive, unsettled_ttl_seconds=600)
+    archive.put_schedule(_schedule())
+    assert reader.schedule(2025).events[0].location == "Monza"
+
+    archive.put_schedule(_schedule(_schedule_event(location="Imola")))
+    now[0] += 599
+    assert reader.schedule(2025).events[0].location == "Monza"
+    now[0] += 1
+    assert reader.schedule(2025).events[0].location == "Imola"

@@ -94,6 +94,9 @@ Why: FastF1 assigns `RoundNumber = 0` to every testing event in a season, so rou
 - F1 data is sourced from FastF1, and finished sessions are exported once into the session archive (see [Session archive](#session-archive)).
 - Request → route → service → the archive, through `app/archive/reader.py`.
   Each request reads only the objects it needs: the session summary, then one object per driver for laps or one per lap for telemetry, fetched in parallel.
+- Season schedules and event details come from the season's schedule in the archive, which the export keeps up to date.
+  Session statuses are worked out from its dates on each request.
+  A season that isn't archived falls back to FastF1's schedule.
 - Sessions that aren't archived yet (live, just uploaded and waiting for the next export, or missing from the archive) fall back to FastF1 through `resolve_session` (in `app/utils.py`).
 - FastF1 sessions are loaded via `locked_load` in `app/fastf1_loader.py`.
   A per-key lock (via `KeyLockRegistry` in `app/utils.py`) serializes concurrent loads of the same session, so only the first fetches it upstream.
@@ -129,8 +132,10 @@ They're process-local: with several uvicorn workers, each has its own.
 | Archived session summaries | `app/archive/reader.py` | `(year, event_id, identifier)` | 256 |
 | Archived circuits | `app/archive/reader.py` | `(year, event_id)` | 128 |
 | Circuits built through FastF1 | `app/schedule/services.py` | `(year, event_id)` | 64 |
+| Archived season schedules | `app/archive/reader.py` | `year` | 32 |
 
 Every archive request needs its session summary, so those are cached; summaries whose results aren't final yet are re-read after 10 minutes.
+Past seasons' schedules are cached for good, and the current season's is re-read after 10 minutes, since its events can still change.
 Laps and telemetry are read from the archive on each request.
 Circuits built through FastF1 are kept, and events without one are re-checked after 10 minutes.
 
@@ -179,6 +184,15 @@ infisical run -- uv run python -m app.archive --recent      # this year's events
 
 `--recent` is what the scheduled export runs: the week covers the 2 days results take to become final, with room to catch up on missed runs.
 
+Every run that exports sessions first exports the season's schedule from FastF1, writing it only when it changed.
+Events can move or be replaced during a season, such as a Grand Prix held at another circuit, so the scheduled export keeps the current season's up to date.
+It's read from FastF1's own schedule backend only: the others FastF1 falls back to can have less detail, which shouldn't replace an exported schedule.
+`--schedule` exports only the schedule, e.g. to add past seasons':
+
+```bash
+infisical run --env=prod -- uv run python -m app.archive 2018 --schedule
+```
+
 These write to Infisical's dev environment, whose bucket is only for testing.
 The production bucket, which the backfill fills, is selected with `--env=prod`:
 
@@ -208,6 +222,7 @@ infisical run --env=prod -- uv run python -m app.archive 2018 r12 --circuit
 ### Scheduled export
 
 In production, a Railway cron service runs `--recent` every 15 minutes.
+Each run also exports this season's schedule when FastF1's has changed, so a moved or replaced event reaches the API within about 15 minutes of FastF1 publishing it.
 Each session is exported as soon as FastF1 can fully load it, and checked again on every run until its results are final, 2 days after it ends.
 A run with nothing new takes a couple of seconds and writes nothing.
 A session FastF1 can't fully load is retried on every run until its results are final, then archived with what loaded (`--allow-incomplete-when-final`).

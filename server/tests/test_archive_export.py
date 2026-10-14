@@ -25,14 +25,16 @@ from app.archive.export import (
     _missing_parts,
     _seconds,
     _str,
+    export_schedule,
     results_final,
     session_end_utc,
     session_start_utc,
     skip_reason,
 )
-from app.archive.models import StoredEvent
+from app.archive.models import StoredEvent, StoredScheduleSession
 from app.caching import SETTLE_BUFFER
 from app.schedule.services import CircuitInfoUnavailable, NoCircuitLayout
+from tests.test_archive import _schedule, _schedule_event
 
 END = datetime(2025, 9, 7, 15, 0, tzinfo=timezone.utc)
 
@@ -382,3 +384,33 @@ def test_export_again_writes_only_what_changed(tmp_path, summary_only_session):
     final = END + SETTLE_BUFFER
     assert export_at(final, failures=["weather"]) is ExportOutcome.EXPORTED
     assert archive.get_session(2025, "r16", "R").results_final
+
+
+def test_export_schedule_writes_a_new_schedule(tmp_path):
+    archive = SessionArchive(LocalBlobStore(str(tmp_path)))
+    assert export_schedule(archive, _schedule()) == ExportOutcome.EXPORTED
+    assert archive.get_schedule(2025) == _schedule()
+
+
+def test_export_schedule_skips_an_unchanged_schedule(tmp_path):
+    archive = SessionArchive(LocalBlobStore(str(tmp_path)))
+    export_schedule(archive, _schedule())
+    later = _schedule(exported_at=datetime(2025, 9, 9, tzinfo=timezone.utc))
+    assert export_schedule(archive, later) == ExportOutcome.UNCHANGED
+    assert archive.get_schedule(2025).exported_at == _schedule().exported_at
+
+
+@pytest.mark.parametrize("changed", [
+    # The event moved to another circuit, e.g. Bahrain's Grand Prix held in Malaysia.
+    _schedule_event(country="Malaysia", location="Sepang"),
+    # A session moved to the same instant in another UTC offset: its local time changed.
+    _schedule_event(sessions=[
+        StoredScheduleSession(name="Practice 1", start=datetime(2025, 9, 5, 12, 30, tzinfo=timezone(timedelta(hours=1)))),
+        *_schedule_event().sessions[1:],
+    ]),
+])
+def test_export_schedule_writes_a_changed_schedule(tmp_path, changed):
+    archive = SessionArchive(LocalBlobStore(str(tmp_path)))
+    export_schedule(archive, _schedule())
+    assert export_schedule(archive, _schedule(changed)) == ExportOutcome.EXPORTED
+    assert archive.get_schedule(2025).events == [changed]

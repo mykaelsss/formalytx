@@ -1,14 +1,13 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-import pandas as pd
 import pytest
 from freezegun import freeze_time
 
 from app import caching
 from app.archive import reader as archive_reader
 from app.archive.archive import SessionArchive
-from app.archive.models import StoredEvent
+from app.archive.models import StoredEvent, StoredScheduleSession
 from app.archive.reader import ArchiveReader
 from app.archive.store import LocalBlobStore
 from app.caching import (
@@ -18,7 +17,8 @@ from app.caching import (
     cache_control_for,
     cache_control_for_year,
 )
-from tests.test_archive import _session
+from app.schedule import services as schedule_services
+from tests.test_archive import _schedule, _schedule_event, _session
 
 
 SESSION_END = datetime(2025, 6, 15, 15, 0, tzinfo=timezone.utc)
@@ -77,24 +77,23 @@ def test_cache_control_for_year_future():
     assert cache_control_for_year(2027) == SETTLING
 
 
-WEEKEND = {
-    "Session1": "Practice 1",
-    "Session1DateUtc": pd.Timestamp("2024-05-03 11:30:00"),
-    "Session2": "Practice 2",
-    "Session2DateUtc": pd.Timestamp("2024-05-03 15:00:00"),
-    "Session3": "Practice 3",
-    "Session3DateUtc": pd.Timestamp("2024-05-04 10:30:00"),
-    "Session4": "Qualifying",
-    "Session4DateUtc": pd.Timestamp("2024-05-04 14:00:00"),
-    "Session5": "Race",
-    "Session5DateUtc": pd.Timestamp("2024-05-05 13:00:00"),
-}
+WEEKEND = _schedule_event(
+    round=5,
+    event_id="r5",
+    sessions=[
+        StoredScheduleSession(name="Practice 1", start=datetime(2024, 5, 3, 11, 30, tzinfo=timezone.utc)),
+        StoredScheduleSession(name="Practice 2", start=datetime(2024, 5, 3, 15, tzinfo=timezone.utc)),
+        StoredScheduleSession(name="Practice 3", start=datetime(2024, 5, 4, 10, 30, tzinfo=timezone.utc)),
+        StoredScheduleSession(name="Qualifying", start=datetime(2024, 5, 4, 14, tzinfo=timezone.utc)),
+        StoredScheduleSession(name="Race", start=datetime(2024, 5, 5, 13, tzinfo=timezone.utc)),
+    ],
+)
 
 
 @pytest.fixture
 def stub_event(monkeypatch):
     def _stub(event=WEEKEND):
-        monkeypatch.setattr(caching, "resolve_event", lambda *_: event)
+        monkeypatch.setattr(caching, "season", lambda year: _schedule(event, year=year))
 
     return _stub
 
@@ -120,36 +119,36 @@ def test_session_end_identifier_is_case_insensitive(stub_event):
     )
 
 
-def test_session_end_attaches_utc_to_naive_timestamp(stub_event):
-    stub_event()
-    assert caching._session_end(2024, "r5", "Q").tzinfo == timezone.utc
-
-
-def test_session_end_preserves_aware_timestamp(stub_event):
-    stub_event(
-        {
-            "Session1": "Practice 1",
-            "Session1DateUtc": pd.Timestamp("2024-05-03 11:30:00", tz="UTC"),
-        }
-    )
+def test_session_end_attaches_utc_to_naive_start(stub_event):
+    stub_event(WEEKEND.model_copy(update={
+        "sessions": [StoredScheduleSession(name="Practice 1", start=datetime(2024, 5, 3, 11, 30))],
+    }))
     assert caching._session_end(2024, "r5", "FP1") == datetime(
         2024, 5, 3, 12, 30, tzinfo=timezone.utc
     )
 
 
+def test_session_end_converts_local_start_to_utc(stub_event):
+    local = timezone(timedelta(hours=-4))
+    stub_event(WEEKEND.model_copy(update={
+        "sessions": [StoredScheduleSession(name="Practice 1", start=datetime(2024, 5, 3, 7, 30, tzinfo=local))],
+    }))
+    end = caching._session_end(2024, "r5", "FP1")
+    assert end == datetime(2024, 5, 3, 12, 30, tzinfo=timezone.utc)
+    assert end.tzinfo == timezone.utc
+
+
+def test_testing_day_ends_after_the_day(stub_event):
+    stub_event(_schedule_event(
+        round=0, event_id="t1", format="testing",
+        sessions=[StoredScheduleSession(name="Practice 1", start=datetime(2025, 2, 26, 7, tzinfo=timezone.utc))],
+    ))
+    assert caching._session_end(2025, "t1", "FP1") == datetime(2025, 2, 26, 16, tzinfo=timezone.utc)
+
+
 def test_session_end_none_when_session_not_in_event(stub_event):
     stub_event()
     assert caching._session_end(2024, "r5", "SQ") is None
-
-
-def test_session_end_none_when_date_is_nat(stub_event):
-    stub_event({"Session1": "Practice 1", "Session1DateUtc": pd.NaT})
-    assert caching._session_end(2024, "r5", "FP1") is None
-
-
-def test_session_end_none_when_date_is_missing(stub_event):
-    stub_event({"Session1": "Practice 1"})
-    assert caching._session_end(2024, "r5", "FP1") is None
 
 
 def test_session_end_none_for_unknown_identifier(stub_event):
@@ -161,6 +160,13 @@ def test_session_end_none_for_unknown_identifier(stub_event):
 def test_cache_control_for_past_event_through_real_session_end(stub_event):
     stub_event()
     assert cache_control_for(2024, "r5", "FP1") == PAST_SEASON
+
+
+def test_cache_control_for_event_not_in_the_season(stub_event, caplog):
+    stub_event()
+    with caplog.at_level(logging.ERROR, logger="uvicorn.error"):
+        assert cache_control_for(2024, "r30", "R") == SETTLING
+    assert "falling back to SETTLING" in caplog.text
 
 
 def test_cache_control_for_logs_when_identifier_is_not_a_string(stub_event, caplog):
@@ -191,10 +197,10 @@ def archive(tmp_path):
 
 @pytest.fixture
 def no_fastf1_schedule(monkeypatch):
-    def _fail(*_):
+    def _fail(*_, **__):
         raise AssertionError("read FastF1's schedule")
 
-    monkeypatch.setattr(caching, "resolve_event", _fail)
+    monkeypatch.setattr(schedule_services.fastf1, "get_event_schedule", _fail)
 
 
 def test_archived_session_ends_without_fastf1(archive, no_fastf1_schedule):
@@ -236,6 +242,6 @@ def test_cache_control_for_archived_past_session(archive, no_fastf1_schedule):
     assert cache_control_for(2025, "r16", "R") == PAST_SEASON
 
 
-def test_unarchived_session_ends_through_fastf1(archive, stub_event):
-    stub_event()
+def test_unarchived_session_ends_from_the_archived_schedule(archive, no_fastf1_schedule):
+    archive.put_schedule(_schedule(WEEKEND, year=2024))
     assert caching._session_end(2024, "r5", "FP1") == datetime(2024, 5, 3, 12, 30, tzinfo=timezone.utc)
