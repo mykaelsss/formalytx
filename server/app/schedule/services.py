@@ -1,10 +1,13 @@
+import itertools
 import logging
 
 import fastf1
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone, timedelta
-from fastf1.core import Session
+from fastf1.core import Lap, Session
+from fastf1.exceptions import DataNotLoadedError
+from fastf1.mvapi import get_circuit_info as get_mv_circuit_info
 from dataclasses import dataclass
 from app.archive import reader
 from app.archive.models import StoredDriver, StoredSession, StoredWeather
@@ -354,26 +357,89 @@ def get_circuit_info(year: int, event_id: str):
     session = cached_locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
     return build_circuit_info(session)
 
+class CircuitInfoUnavailable(Exception):
+    """The session has nothing to build the circuit info from."""
+
+class NoCircuitLayout(CircuitInfoUnavailable):
+    """FastF1 has no layout for the circuit, so no session of the event has
+    circuit info, e.g. at a circuit new to MultiViewer."""
+
+_REFERENCE_LAP_ATTEMPTS = 20
+
+def _has_telemetry(lap: Lap) -> bool:
+    """Whether the lap's merged telemetry, which placing the markers takes
+    its positions from, can be built."""
+    try:
+        if lap.get_car_data().empty or lap.get_pos_data().empty:
+            return False
+        # Merging also finds the car ahead, which fails when no other car's
+        # data overlaps the lap, as in some sparse older sessions.
+        telemetry = lap.get_telemetry(frequency="original")
+        return not telemetry[telemetry["Source"] == "pos"].empty
+    except Exception:
+        return False
+
+def _reference_lap(session: Session) -> Lap | None:
+    """The lap to place the circuit's markers and sectors along: the fastest
+    lap with car and position data.
+
+    FastF1 only tries the fastest lap, which in some older sessions has no
+    telemetry even though most other laps do.
+    """
+    try:
+        if not session.car_data or not session.pos_data:
+            return None
+        laps = session.laps
+    except DataNotLoadedError:
+        return None
+    fastest = laps.pick_fastest()
+    by_time = (lap for _, lap in laps.dropna(subset=["LapTime"]).sort_values("LapTime").iterlaps())
+    candidates = itertools.chain([fastest] if fastest is not None else [], by_time)
+    # Merging telemetry is slow; a session this sparse is better left to the next one.
+    candidates = itertools.islice(candidates, _REFERENCE_LAP_ATTEMPTS)
+    return next((lap for lap in candidates if _has_telemetry(lap)), None)
+
+def _circuit_key(session: Session) -> int:
+    # As in FastF1's Session.get_circuit_info, which only takes the fastest
+    # lap as its reference, including its correction of Mugello's key.
+    circuit = session.session_info["Meeting"]["Circuit"]
+    if circuit["Key"] == 149 and circuit["ShortName"] == "Mugello":
+        return 146
+    return circuit["Key"]
+
 def build_circuit_info(session: Session) -> dict:
-    """Circuit layout from a session loaded with laps and telemetry."""
-    circuit_info = session.get_circuit_info()
+    """Circuit layout from a session loaded with laps and telemetry.
+
+    Raises CircuitInfoUnavailable when no lap has both car and position data,
+    e.g. when the session's telemetry is missing upstream, and NoCircuitLayout
+    when FastF1 has no layout of the circuit.
+    """
+    # Checked first: it's quicker than finding a reference lap, and holds for
+    # every session of the event.
+    circuit_key = _circuit_key(session)
+    circuit_info = get_mv_circuit_info(year=session.event.year, circuit_key=circuit_key)
+    if circuit_info is None:
+        name = session.session_info["Meeting"]["Circuit"]["ShortName"]
+        raise NoCircuitLayout(f"FastF1 has no layout of {name} (circuit key {circuit_key}) for {session.event.year}")
+    reference_lap = _reference_lap(session)
+    if reference_lap is None:
+        raise CircuitInfoUnavailable(f"none of the fastest laps of {session} has usable car and position data")
+    circuit_info.add_marker_distance(reference_lap=reference_lap)
 
     sector_distances = []
     try:
-        fastest_lap = session.laps.pick_fastest()
-        if fastest_lap is not None:
-            s1 = fastest_lap.get("Sector1Time")
-            s2 = fastest_lap.get("Sector2Time")
-            if s1 is not None and s2 is not None and not pd.isna(s1) and not pd.isna(s2):
-                tel = fastest_lap.get_telemetry()
-                if tel is not None and not tel.empty:
-                    tel_time = tel["Time"].dt.total_seconds()
-                    s1_secs = pd.Timedelta(s1).total_seconds()
-                    s2_secs = s1_secs + pd.Timedelta(s2).total_seconds()
-                    for t in [s1_secs, s2_secs]:
-                        mask = tel_time >= t
-                        if mask.any():
-                            sector_distances.append(float(tel.loc[mask.idxmax(), "Distance"]))
+        s1 = reference_lap.get("Sector1Time")
+        s2 = reference_lap.get("Sector2Time")
+        if s1 is not None and s2 is not None and not pd.isna(s1) and not pd.isna(s2):
+            tel = reference_lap.get_telemetry()
+            if tel is not None and not tel.empty:
+                tel_time = tel["Time"].dt.total_seconds()
+                s1_secs = pd.Timedelta(s1).total_seconds()
+                s2_secs = s1_secs + pd.Timedelta(s2).total_seconds()
+                for t in [s1_secs, s2_secs]:
+                    mask = tel_time >= t
+                    if mask.any():
+                        sector_distances.append(float(tel.loc[mask.idxmax(), "Distance"]))
     except Exception:
         logger.exception("Error computing sector distances")
 

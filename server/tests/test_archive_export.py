@@ -8,6 +8,7 @@ import pytest
 import requests
 from fastf1.exceptions import DataNotLoadedError
 from fastf1.logger import get_logger, soft_exceptions
+from fastf1.utils import to_timedelta
 
 from app.archive import export
 from app.archive.export import (
@@ -27,6 +28,7 @@ from app.archive.export import (
     skip_reason,
 )
 from app.caching import SETTLE_BUFFER
+from app.schedule.services import CircuitInfoUnavailable, NoCircuitLayout
 
 END = datetime(2025, 9, 7, 15, 0, tzinfo=timezone.utc)
 
@@ -139,6 +141,13 @@ def test_capture_load_failures_collects_errors_fastf1_swallows():
     assert "connection reset" in load.failures[0]
 
 
+def test_capture_load_failures_ignores_values_fastf1_skips():
+    # FastF1 parses gaps as times and skips those to lapping cars.
+    with _capture_load_failures() as load:
+        assert to_timedelta("+1 L") is None
+    assert load.failures == []
+
+
 def test_capture_load_failures_ignores_other_threads():
     with _capture_load_failures() as load:
         thread = threading.Thread(target=_soft_failing_load)
@@ -211,3 +220,69 @@ def test_missing_parts_reports_parts_that_failed_to_load():
 
     session = NotLoaded(**vars(_loaded_session(laps=pd.DataFrame({"DriverNumber": []}))))
     assert _missing_parts(session) == ["laps", "results"]
+
+
+class _CircuitArchive:
+    def __init__(self, circuit=None):
+        self.circuit = circuit
+
+    def get_circuit(self, year, event_id):
+        return self.circuit
+
+    def put_circuit(self, year, event_id, circuit):
+        self.circuit = circuit
+
+
+@pytest.fixture
+def sessions_with_telemetry(monkeypatch):
+    """Sessions load as themselves, and build circuit info only if listed."""
+    loaded = []
+
+    def resolve(year, event_id, identifier):
+        return SimpleNamespace(name=identifier, load=lambda **kwargs: loaded.append(identifier))
+
+    with_telemetry: set[str] = set()
+    monkeypatch.setattr(export, "resolve_session", resolve)
+    monkeypatch.setattr(export, "_build_circuit", lambda s, *args: f"from {s.name}" if s.name in with_telemetry else None)
+    return with_telemetry, loaded
+
+
+def test_export_circuit_from_the_first_session_with_telemetry(sessions_with_telemetry):
+    with_telemetry, loaded = sessions_with_telemetry
+    with_telemetry.update({"FP2", "Q"})
+    archive = _CircuitArchive()
+    assert export.export_circuit(archive, 2018, "r12", ["FP1", "FP2", "Q"]) is ExportOutcome.EXPORTED
+    assert archive.circuit == "from FP2"
+    assert loaded == ["FP1", "FP2"]
+
+
+def test_export_circuit_keeps_existing_circuit_info(sessions_with_telemetry):
+    with_telemetry, loaded = sessions_with_telemetry
+    with_telemetry.add("FP1")
+    archive = _CircuitArchive("existing")
+    assert export.export_circuit(archive, 2018, "r12", ["FP1"]) is ExportOutcome.ALREADY_EXPORTED
+    assert (archive.circuit, loaded) == ("existing", [])
+    assert export.export_circuit(archive, 2018, "r12", ["FP1"], overwrite=True) is ExportOutcome.EXPORTED
+    assert archive.circuit == "from FP1"
+
+
+def test_export_circuit_stops_without_a_layout(sessions_with_telemetry, monkeypatch):
+    _, loaded = sessions_with_telemetry
+
+    def no_layout(session, *args):
+        raise NoCircuitLayout("FastF1 has no layout of Madring (circuit key 153) for 2026")
+
+    monkeypatch.setattr(export, "_build_circuit", no_layout)
+    archive = _CircuitArchive()
+    with pytest.raises(NoCircuitLayout, match="Madring"):
+        export.export_circuit(archive, 2026, "r14", ["FP1", "FP2"])
+    assert (archive.circuit, loaded) == (None, ["FP1"])
+
+
+def test_export_circuit_without_telemetry(sessions_with_telemetry):
+    archive = _CircuitArchive()
+    with pytest.raises(CircuitInfoUnavailable, match="2018 r12 FP1, FP2"):
+        export.export_circuit(archive, 2018, "r12", ["FP1", "FP2"])
+    with pytest.raises(CircuitInfoUnavailable, match="no finished sessions"):
+        export.export_circuit(archive, 2018, "r12", [])
+    assert archive.circuit is None
