@@ -34,6 +34,7 @@ from app.caching import SETTLE_BUFFER
 from app.schedule.services import (
     SESSION_DURATION_MINUTES,
     SESSION_NAME_TO_IDENTIFIER,
+    TESTING_SESSION_MINUTES,
     CircuitInfoUnavailable,
     NoCircuitLayout,
     build_circuit_info,
@@ -46,8 +47,6 @@ logger = logging.getLogger("uvicorn.error")
 # this long after, a session it can't fully load is taken to be still uploading
 # rather than failed.
 UPLOAD_WINDOW = timedelta(hours=6)
-# Testing days run all day, not for a regular session's length.
-TESTING_SESSION_MINUTES = 9 * 60
 QUALIFYING_SESSION_NAMES = {"Qualifying", "Sprint Qualifying", "Sprint Shootout"}
 
 

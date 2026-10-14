@@ -3,7 +3,9 @@ from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 
-from app.schedule.services import SESSION_DURATION_MINUTES
+from app.archive import reader
+from app.archive.models import StoredSession
+from app.schedule.services import SESSION_DURATION_MINUTES, TESTING_SESSION_MINUTES
 from app.sessions.services import IDENTIFIER_MAP
 from app.utils import resolve_event
 
@@ -19,7 +21,28 @@ SETTLING = "public, max-age=0, s-maxage=3600"
 PAST_SEASON = "public, max-age=0, s-maxage=604800"
 
 
+def _stored_session_end(stored: StoredSession) -> datetime | None:
+    start = stored.start_utc
+    if start is None:
+        return None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if stored.event.format == "testing":
+        minutes = TESTING_SESSION_MINUTES
+    else:
+        minutes = SESSION_DURATION_MINUTES.get(stored.identifier, 60)
+    return start + timedelta(minutes=minutes)
+
+
 def _session_end(year: int, event_id: str, identifier: str | int) -> datetime | None:
+    # An archived session's start comes from its summary, which the request has
+    # already read and the reader caches. FastF1's schedule would do too, but
+    # FastF1 revalidates it with GitHub every 5 minutes, and a stalled request
+    # holds the response until it times out.
+    archive = reader.current()
+    stored = archive.session(year, event_id, identifier) if archive is not None else None
+    if stored is not None:
+        return _stored_session_end(stored)
     event = resolve_event(year, event_id)
     name = IDENTIFIER_MAP.get(identifier.upper(), identifier)
     for i in range(1, 6):

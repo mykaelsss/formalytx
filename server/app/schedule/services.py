@@ -42,6 +42,8 @@ SESSION_DURATION_MINUTES = {
     "S": 30,
     "R": 120,
 }
+# Testing days run all day, not for a regular session's length.
+TESTING_SESSION_MINUTES = 9 * 60
 
 def get_schedule(year: int):
     schedule = fastf1.get_event_schedule(year)

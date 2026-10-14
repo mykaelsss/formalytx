@@ -6,6 +6,11 @@ import pytest
 from freezegun import freeze_time
 
 from app import caching
+from app.archive import reader as archive_reader
+from app.archive.archive import SessionArchive
+from app.archive.models import StoredEvent
+from app.archive.reader import ArchiveReader
+from app.archive.store import LocalBlobStore
 from app.caching import (
     LIVE,
     PAST_SEASON,
@@ -13,6 +18,7 @@ from app.caching import (
     cache_control_for,
     cache_control_for_year,
 )
+from tests.test_archive import _session
 
 
 SESSION_END = datetime(2025, 6, 15, 15, 0, tzinfo=timezone.utc)
@@ -173,3 +179,63 @@ def test_directives_match_policy():
     assert LIVE == "public, no-cache"
     assert SETTLING == "public, max-age=0, s-maxage=3600"
     assert PAST_SEASON == "public, max-age=0, s-maxage=604800"
+
+
+@pytest.fixture
+def archive(tmp_path):
+    archive = SessionArchive(LocalBlobStore(str(tmp_path)))
+    archive_reader.configure(ArchiveReader(archive, workers=4))
+    yield archive
+    archive_reader.configure(None)
+
+
+@pytest.fixture
+def no_fastf1_schedule(monkeypatch):
+    def _fail(*_):
+        raise AssertionError("read FastF1's schedule")
+
+    monkeypatch.setattr(caching, "resolve_event", _fail)
+
+
+def test_archived_session_ends_without_fastf1(archive, no_fastf1_schedule):
+    archive.put_session(_session(identifier="FP1", name="Practice 1", start_utc=datetime(2025, 9, 5, 11, 30, tzinfo=timezone.utc)))
+    assert caching._session_end(2025, "r16", "fp1") == datetime(2025, 9, 5, 12, 30, tzinfo=timezone.utc)
+
+
+def test_archived_session_uses_per_session_duration(archive, no_fastf1_schedule):
+    archive.put_session(_session())
+    assert caching._session_end(2025, "r16", "R") == datetime(2025, 9, 7, 15, 0, tzinfo=timezone.utc)
+
+
+def test_archived_testing_day_runs_all_day(archive, no_fastf1_schedule):
+    archive.put_session(_session(
+        event_id="t1", identifier="1", name="Practice 1",
+        start_utc=datetime(2025, 2, 26, 7, tzinfo=timezone.utc),
+        event=StoredEvent(
+            round=0, name="Pre-Season Testing", official_name=None, country="Bahrain",
+            location="Sakhir", date="2025-02-28", format="testing",
+        ),
+    ))
+    assert caching._session_end(2025, "t1", "1") == datetime(2025, 2, 26, 16, tzinfo=timezone.utc)
+
+
+def test_archived_session_without_start_has_no_end(archive, no_fastf1_schedule):
+    archive.put_session(_session(start_utc=None))
+    assert caching._session_end(2025, "r16", "R") is None
+
+
+@freeze_time("2025-09-08 12:00:00")
+def test_cache_control_for_archived_session_still_settling(archive, no_fastf1_schedule):
+    archive.put_session(_session(results_final=False))
+    assert cache_control_for(2025, "r16", "R") == SETTLING
+
+
+@freeze_time("2026-06-21 12:00:00")
+def test_cache_control_for_archived_past_session(archive, no_fastf1_schedule):
+    archive.put_session(_session())
+    assert cache_control_for(2025, "r16", "R") == PAST_SEASON
+
+
+def test_unarchived_session_ends_through_fastf1(archive, stub_event):
+    stub_event()
+    assert caching._session_end(2024, "r5", "FP1") == datetime(2024, 5, 3, 12, 30, tzinfo=timezone.utc)
