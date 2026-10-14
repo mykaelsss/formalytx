@@ -19,6 +19,9 @@ ENV PYTHONUNBUFFERED=1
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
 
+# Keep uv's download cache out of the image layers
+ENV UV_NO_CACHE=1
+
 # Omit development dependencies
 ENV UV_NO_DEV=1
 
@@ -27,22 +30,24 @@ ENV UV_TOOL_BIN_DIR=/usr/local/bin
 
 # Install the project's dependencies using the lockfile and settings.
 # Copying only the lockfile + manifest first keeps this layer cached unless
-# they change. No uv cache mount: Railway ties a cache mount's id to a single
-# service, and the API and the scheduled export build from this same file.
-# --no-cache keeps uv's download cache out of the image.
+# they change. There's no uv cache mount: Railway requires its id to name the
+# building service, and both the API and the scheduled export build this file.
 COPY uv.lock pyproject.toml ./
-RUN uv sync --locked --no-install-project --no-cache
+RUN uv sync --locked --no-install-project
 
 # Then, add the rest of the project source code and install it
 # Installing separately from its dependencies allows optimal layer caching
 COPY . /app
-RUN uv sync --locked --no-cache
+RUN uv sync --locked
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
-RUN mkdir -p /home/nonroot/.fastf1 \
-   && chown -R nonroot:nonroot /home/nonroot/.fastf1
+# The FastF1 cache lives where nonroot can write it; the API mounts a disk over
+# it, and the scheduled export uses the container's own storage.
+ENV FASTF1_CACHE_DIR=/home/nonroot/.fastf1
+RUN mkdir -p "$FASTF1_CACHE_DIR" \
+   && chown -R nonroot:nonroot "$FASTF1_CACHE_DIR"
 
 # Entrypoint runs as root only long enough to chown the mounted cache disk,
 # then execs the server as nonroot via gosu (see docker-entrypoint.sh).

@@ -1,10 +1,9 @@
 from datetime import date, datetime, timezone
-from types import SimpleNamespace
 
 import pytest
 
 from app.archive import __main__ as cli
-from app.archive.export import ExportOutcome
+from app.archive.export import ExportOutcome, IncompleteLoadError
 
 SCHEDULE = {"events": [
     {"identifier": "r15", "status": "completed", "event_date_end": "2025-08-31"},
@@ -30,39 +29,74 @@ def test_sessions_of_events_ended_since(schedule):
 
 
 @pytest.fixture
-def exports(monkeypatch):
-    """Runs main without FastF1 or an archive, recording what it exports."""
-    exported = []
-    monkeypatch.setattr(cli, "open_archive", lambda settings: SimpleNamespace())
-    monkeypatch.setattr(cli.fastf1.Cache, "enable_cache", lambda *args, **kwargs: None)
+def run(monkeypatch, tmp_path):
+    """Runs the command against a local archive, with the sessions to export
+    and each one's outcome (or exception) given by the test."""
+    monkeypatch.setenv("ARCHIVE_LOCAL_DIR", str(tmp_path / "archive"))
+    monkeypatch.setenv("FASTF1_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.delenv("R2_BUCKET", raising=False)
     monkeypatch.setattr(cli, "install_request_timeouts", lambda *args: None)
-    monkeypatch.setattr(cli.os, "makedirs", lambda *args, **kwargs: None)
 
-    def sessions(year, event_id, identifier, *, ended_since=None):
-        exported.append((year, ended_since))
-        return [("r16", "R")]
+    def run(argv, outcomes):
+        listed = []
+        exported = []
 
-    monkeypatch.setattr(cli, "_sessions", sessions)
-    monkeypatch.setattr(cli, "export_session", lambda *args, **kwargs: ExportOutcome.UNCHANGED)
-    return exported
+        def sessions(year, event_id, identifier, *, ended_since=None):
+            listed.append((year, ended_since))
+            return list(outcomes)
+
+        def export_session(archive, year, event_id, identifier, **kwargs):
+            exported.append((year, event_id, identifier, kwargs))
+            outcome = outcomes[(event_id, identifier)]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        monkeypatch.setattr(cli, "_sessions", sessions)
+        monkeypatch.setattr(cli, "export_session", export_session)
+        return cli.main(argv), listed, exported
+
+    return run
 
 
-def test_main_defaults_to_the_current_year(exports):
-    assert cli.main([]) == 0
-    assert exports == [(datetime.now(timezone.utc).year, None)]
+def test_defaults_to_the_current_season(run):
+    status, listed, _ = run([], {("r1", "R"): ExportOutcome.EXPORTED})
+    assert status == 0
+    assert listed == [(datetime.now(timezone.utc).year, None)]
 
 
-def test_main_recent_checks_events_ended_in_the_last_week(exports):
-    assert cli.main(["--recent"]) == 0
-    assert exports == [(datetime.now(timezone.utc).year, (datetime.now(timezone.utc) - cli.RECENT).date())]
-
-
-def test_main_no_data_isnt_a_failure(exports, monkeypatch):
-    monkeypatch.setattr(cli, "export_session", lambda *args, **kwargs: ExportOutcome.NO_DATA)
-    assert cli.main(["2025"]) == 0
+def test_recent_checks_events_ended_in_the_last_week(run):
+    _, listed, _ = run(["--recent"], {("r1", "R"): ExportOutcome.UNCHANGED})
+    now = datetime.now(timezone.utc)
+    assert listed == [(now.year, (now - cli.RECENT).date())]
 
 
 @pytest.mark.parametrize("argv", [["--recent", "2025", "r16"], ["--recent", "--circuit"]])
-def test_main_recent_doesnt_take_an_event(argv):
+def test_recent_doesnt_take_an_event(argv):
     with pytest.raises(SystemExit):
         cli.main(argv)
+
+
+def test_passes_allow_incomplete_when_final(run):
+    _, _, exported = run(["2025", "--allow-incomplete-when-final"], {("r1", "R"): ExportOutcome.EXPORTED})
+    assert exported[0][3]["allow_incomplete_when_final"] is True
+    assert exported[0][3]["allow_incomplete"] is False
+
+
+def test_incomplete_sessions_and_no_data_dont_fail_the_run(run):
+    status, _, exported = run(["2025"], {
+        ("r1", "FP3"): ExportOutcome.NO_DATA,
+        ("r1", "S"): IncompleteLoadError(["position data for 2 of 20 drivers"]),
+        ("r1", "R"): ExportOutcome.EXPORTED,
+    })
+    assert status == 0
+    assert len(exported) == 3
+
+
+def test_errors_fail_the_run(run):
+    status, _, exported = run(["2025"], {
+        ("r1", "S"): RuntimeError("R2 is down"),
+        ("r1", "R"): ExportOutcome.EXPORTED,
+    })
+    assert status == 1
+    assert len(exported) == 2

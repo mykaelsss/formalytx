@@ -23,9 +23,14 @@ end time is unknown.
 A session FastF1 fails to load completely isn't exported, since it would stay
 incomplete in the archive. Within UPLOAD_WINDOW of its end it's taken to be
 still uploading. After that, a session without any laps is skipped as having
-no data upstream (e.g. it was cancelled), and any other fails. Run it again
-later; if the data doesn't exist upstream, --allow-incomplete exports it with
-the missing parts recorded.
+no data upstream (e.g. it was cancelled), and any other is incomplete. Run it
+again later; if the data doesn't exist upstream, --allow-incomplete exports it
+with the missing parts recorded. --allow-incomplete-when-final does that only
+once the session's results are final, so a scheduled export retries it until
+then and stops after.
+
+The exit status is 1 when a session failed with an error. Sessions skipped as
+incomplete don't count, since the next run retries them.
 
 An event's circuit info is built when its first session is exported, or a
 later one if that fails. --circuit builds only the circuit info, from the
@@ -100,6 +105,11 @@ def main(argv: list[str] | None = None) -> int:
         "--allow-incomplete", action="store_true", help="export sessions FastF1 can only partly load"
     )
     parser.add_argument(
+        "--allow-incomplete-when-final",
+        action="store_true",
+        help="export sessions FastF1 can only partly load once their results are final",
+    )
+    parser.add_argument(
         "--circuit", action="store_true", help="only build circuit info, for events that have none"
     )
     parser.add_argument(
@@ -153,10 +163,11 @@ def main(argv: list[str] | None = None) -> int:
                     force=args.force,
                     overwrite=args.overwrite,
                     allow_incomplete=args.allow_incomplete,
+                    allow_incomplete_when_final=args.allow_incomplete_when_final,
                 )
             except IncompleteLoadError as exc:
                 logger.error("Not exporting %s %s %s: %s", year, event_id, identifier, exc)
-                outcomes["failed"] += 1
+                outcomes["incomplete"] += 1
             except Exception:
                 logger.exception("Failed to export %s %s %s", year, event_id, identifier)
                 outcomes["failed"] += 1

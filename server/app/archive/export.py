@@ -525,6 +525,7 @@ def export_session(
     force: bool = False,
     overwrite: bool = False,
     allow_incomplete: bool = False,
+    allow_incomplete_when_final: bool = False,
     now: datetime | None = None,
 ) -> ExportOutcome:
     """Load a session from FastF1 and export it, unless it isn't ready yet or
@@ -534,7 +535,9 @@ def export_session(
     ready yet. After that, one without any laps is taken to have no data
     upstream, e.g. because it was cancelled, and isn't exported. Otherwise
     IncompleteLoadError is raised, unless allow_incomplete is set for data that
-    doesn't exist upstream.
+    doesn't exist upstream. allow_incomplete_when_final sets it only once the
+    session's results are final: data still missing by then isn't expected to
+    appear upstream, so scheduled exports stop retrying the session.
     """
     now = now or datetime.now(timezone.utc)
     session = resolve_session(year, event_id, identifier)
@@ -556,7 +559,13 @@ def export_session(
         if not _lap_driver_numbers(session):
             logger.warning("Skipping %s %s %s: FastF1 has no laps of it (%s)", year, event_id, identifier, "; ".join(failures))
             return ExportOutcome.NO_DATA
-        raise IncompleteLoadError(failures)
+        if not (allow_incomplete_when_final and results_final(end, now)):
+            raise IncompleteLoadError(failures)
+    if failures:
+        logger.warning(
+            "Exporting %s %s %s without what FastF1 failed to load: %s",
+            year, event_id, identifier, "; ".join(failures),
+        )
     return export_loaded_session(
         archive, session, year, event_id, identifier, now=now, existing=existing, load_failures=failures
     )

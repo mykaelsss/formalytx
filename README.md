@@ -170,13 +170,13 @@ Finished sessions are exported from FastF1 into the archive (Cloudflare R2, or a
 
 ```bash
 cd server
+infisical run -- uv run python -m app.archive               # every finished session of this season
 infisical run -- uv run python -m app.archive 2025          # every finished session of 2025
 infisical run -- uv run python -m app.archive 2025 r16      # every session of one event
 infisical run -- uv run python -m app.archive 2025 r16 R    # one session
 infisical run -- uv run python -m app.archive --recent      # this year's events under way or ended in the last week
 ```
 
-The year defaults to the current one.
 `--recent` is what the scheduled export runs: the week covers the 2 days results take to become final, with room to catch up on missed runs.
 
 These write to Infisical's dev environment, whose bucket is only for testing.
@@ -192,8 +192,9 @@ Those checks bypass FastF1's cache, which would otherwise keep the first data it
 Sessions with final results are skipped; `--overwrite` checks them again, and `--force` also exports sessions that haven't ended.
 A session FastF1 can't fully load (laps, car or position data, results or weather) isn't exported.
 Within 6 hours of its end it's taken to be still uploading.
-After that, a session without any laps, such as one cancelled for weather, is skipped as having no data, and any other fails.
+After that, a session without any laps, such as one cancelled for weather, is skipped as having no data, and any other is skipped as incomplete.
 If that data doesn't exist upstream, `--allow-incomplete` exports it with the missing parts recorded.
+`--allow-incomplete-when-final` does so only once the session's results are final, 2 days after it ends, since missing data rarely appears later than that.
 
 An event's circuit info is built when its first session is exported.
 If that session has no lap with car and position data, the next session exported builds it instead.
@@ -203,6 +204,23 @@ An event at a circuit FastF1 has no layout for, such as one new to MultiViewer, 
 ```bash
 infisical run --env=prod -- uv run python -m app.archive 2018 r12 --circuit
 ```
+
+### Scheduled export
+
+In production, a Railway cron service runs `--recent` every 15 minutes.
+Each session is exported as soon as FastF1 can fully load it, and checked again on every run until its results are final, 2 days after it ends.
+A run with nothing new takes a couple of seconds and writes nothing.
+A session FastF1 can't fully load is retried on every run until its results are final, then archived with what loaded (`--allow-incomplete-when-final`).
+A run exits with an error only when a session failed with one, such as R2 or FastF1 being unreachable; the next run retries it.
+
+The service is built from `server/` like the API, and its settings live in `server/railway.cron.toml`.
+To set it up:
+
+1. Add a service from this repository with the root directory `/server`.
+2. Under Settings > Config-as-code, set the config file to `/server/railway.cron.toml`.
+3. Give it the API's R2 variables (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`) from Infisical's prod environment.
+
+It needs no volume or domain: FastF1's cache only lasts for one run.
 
 ### Frontend
 

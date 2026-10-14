@@ -198,12 +198,27 @@ def test_export_session_skips_a_session_without_laps(partly_loading_session, mon
     early = END + UPLOAD_WINDOW - timedelta(minutes=1)
     assert export.export_session(archive, 2025, "r16", "R", now=early) is ExportOutcome.NOT_READY
     assert export.export_session(archive, 2025, "r16", "R", now=END + UPLOAD_WINDOW) is ExportOutcome.NO_DATA
+    # Nothing is archived for it once its results are final either.
+    final = END + SETTLE_BUFFER
+    outcome = export.export_session(archive, 2025, "r16", "R", allow_incomplete_when_final=True, now=final)
+    assert outcome is ExportOutcome.NO_DATA
     assert exported == []
 
 
 def test_export_session_allow_incomplete_records_the_failures(partly_loading_session):
     archive, exported = partly_loading_session
     outcome = export.export_session(archive, 2025, "r16", "R", allow_incomplete=True, now=END + UPLOAD_WINDOW)
+    assert outcome is ExportOutcome.EXPORTED
+    assert len(exported[0]["load_failures"]) == 1
+
+
+def test_export_session_allow_incomplete_when_final_waits_for_final_results(partly_loading_session):
+    archive, exported = partly_loading_session
+    with pytest.raises(IncompleteLoadError):
+        export.export_session(archive, 2025, "r16", "R", allow_incomplete_when_final=True, now=END + UPLOAD_WINDOW)
+    assert exported == []
+
+    outcome = export.export_session(archive, 2025, "r16", "R", allow_incomplete_when_final=True, now=END + SETTLE_BUFFER)
     assert outcome is ExportOutcome.EXPORTED
     assert len(exported[0]["load_failures"]) == 1
 
