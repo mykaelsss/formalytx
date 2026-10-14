@@ -134,6 +134,7 @@ These caches are process-local. If you ever run multiple uvicorn workers, each w
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Node.js](https://nodejs.org/) + [pnpm](https://pnpm.io/)
+- [uv](https://docs.astral.sh/uv/)
 - [Infisical CLI](https://infisical.com/docs/cli/overview), logged in with `infisical login`
 
 ### Secrets
@@ -152,6 +153,29 @@ docker compose up --build --watch
 ```
 
 The API will be available at `http://localhost:80` (via nginx) or `http://localhost:8000` (direct).
+
+### Session archive
+
+Finished sessions are exported from FastF1 into the archive (Cloudflare R2, or a local folder):
+
+```bash
+cd server
+infisical run -- uv run python -m app.archive 2025          # every finished session of 2025
+infisical run -- uv run python -m app.archive 2025 r16      # every session of one event
+infisical run -- uv run python -m app.archive 2025 r16 R    # one session
+```
+
+These write to Infisical's dev environment, whose bucket is only for testing.
+The production bucket, which the backfill fills, is selected with `--env=prod`:
+
+```bash
+infisical run --env=prod -- uv run python -m app.archive 2025
+```
+
+Sessions already exported are skipped unless their results have since become final.
+`--overwrite` exports them again, and `--force` also exports sessions that ended less than 6 hours ago.
+A session FastF1 can't fully load (laps, car or position data, results or weather) isn't exported.
+If that data doesn't exist upstream, `--allow-incomplete` exports it with the missing parts recorded.
 
 ### Frontend
 

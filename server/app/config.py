@@ -1,3 +1,4 @@
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -12,6 +13,14 @@ class Settings(BaseSettings):
     # would otherwise block the calling thread forever.
     upstream_connect_timeout_seconds: float = 10
     upstream_read_timeout_seconds: float = 30
+
+    # Archive of exported sessions. Uses R2 when r2_bucket is set, otherwise a
+    # local directory when archive_local_dir is set, otherwise it's disabled.
+    r2_account_id: str = ''
+    r2_access_key_id: str = ''
+    r2_secret_access_key: SecretStr = SecretStr('')
+    r2_bucket: str = ''
+    archive_local_dir: str = ''
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     

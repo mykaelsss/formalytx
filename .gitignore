@@ -11,6 +11,9 @@ build/
 # FastF1 cache
 cache/
 
+# Local session archive (ARCHIVE_LOCAL_DIR)
+archive_data/
+
 # Environment
 .env
 .env.local
