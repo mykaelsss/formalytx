@@ -1,4 +1,6 @@
+import collections
 import threading
+import time
 import weakref
 
 import fastf1
@@ -58,6 +60,34 @@ class KeyLockRegistry:
             return lock
 
 
+class ExpiringLRU:
+    """Thread-safe LRU whose entries can expire."""
+
+    def __init__(self, max_size: int):
+        self._entries: "collections.OrderedDict[tuple, tuple[object, float | None]]" = collections.OrderedDict()
+        self._max_size = max_size
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple):
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            value, expires_at = entry
+            if expires_at is not None and time.monotonic() >= expires_at:
+                del self._entries[key]
+                return None
+            self._entries.move_to_end(key)
+            return value
+
+    def put(self, key: tuple, value, ttl: float | None = None) -> None:
+        with self._lock:
+            self._entries[key] = (value, None if ttl is None else time.monotonic() + ttl)
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_size:
+                self._entries.popitem(last=False)
+
+
 def parse_event_id(event_id: str) -> tuple[Literal["test", "race"], int]:
     if not event_id or event_id[0] not in ("t", "r"):
         raise HTTPException(status_code=404, detail=f"Invalid event id: {event_id!r}")
@@ -87,7 +117,13 @@ def resolve_session(year: int, event_id: str, identifier: str):
 def format_lap_time(td) -> str | None:
     if td is None or pd.isna(td):
         return None
-    secs = pd.Timedelta(td).total_seconds()
+    return format_seconds(pd.Timedelta(td).total_seconds())
+
+
+def format_seconds(secs: float | None) -> str | None:
+    """A lap time in seconds as m:ss.fff."""
+    if secs is None:
+        return None
     m = int(secs // 60)
     s = secs % 60
     return f"{m}:{s:06.3f}"
