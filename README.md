@@ -160,6 +160,7 @@ Finished sessions are exported from FastF1 into the archive (Cloudflare R2, or a
 
 ```bash
 cd server
+infisical run -- uv run python -m app.archive               # every finished session of this season
 infisical run -- uv run python -m app.archive 2025          # every finished session of 2025
 infisical run -- uv run python -m app.archive 2025 r16      # every session of one event
 infisical run -- uv run python -m app.archive 2025 r16 R    # one session
@@ -176,6 +177,23 @@ Sessions already exported are skipped unless their results have since become fin
 `--overwrite` exports them again, and `--force` also exports sessions that ended less than 6 hours ago.
 A session FastF1 can't fully load (laps, car or position data, results or weather) isn't exported.
 If that data doesn't exist upstream, `--allow-incomplete` exports it with the missing parts recorded.
+`--allow-incomplete-when-final` does so only once the session's results are final, 2 days after it ends, since missing data rarely appears later than that.
+
+### Scheduled export
+
+In production, a Railway cron service runs the export for the current season every hour.
+It archives each session 6 hours after it ends, and again once its results are final.
+A session FastF1 can't fully load is retried every hour until its results are final, then archived with what loaded.
+A run exits with an error only when a session failed with one, such as R2 or FastF1 being unreachable; the next run retries it.
+
+The service is built from `server/` like the API, and its settings live in `server/railway.cron.toml`.
+To set it up:
+
+1. Add a service from this repository with the root directory `/server`.
+2. Under Settings > Config-as-code, set the config file to `/server/railway.cron.toml`.
+3. Give it the API's R2 variables (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`) from Infisical's prod environment.
+
+It needs no volume or domain: FastF1's cache only lasts for one run.
 
 ### Frontend
 

@@ -1,0 +1,14 @@
+# Railway service that exports finished sessions of the current season into
+# the archive every hour, built from this directory like the API.
+# Point the service at it with Settings > Config-as-code: /server/railway.cron.toml
+
+[build]
+builder = "DOCKERFILE"
+
+[deploy]
+# A start command replaces the image's entrypoint, which drops to nonroot.
+startCommand = "/usr/local/bin/docker-entrypoint.sh python -m app.archive --allow-incomplete-when-final"
+# UTC. A run still going when the next is due makes Railway skip that one.
+cronSchedule = "15 * * * *"
+# A failed run is retried by the next scheduled one.
+restartPolicyType = "NEVER"
