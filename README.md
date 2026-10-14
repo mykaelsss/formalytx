@@ -222,6 +222,7 @@ The cron has no volume or domain: FastF1's cache only lasts for one run.
 To change the setup, edit `railway.ts`, then from `server/`:
 
 ```bash
+pnpm install           # the railway SDK that railway.ts imports
 railway config plan    # preview; doesn't change Railway
 railway config apply   # apply after reviewing the plan
 ```
