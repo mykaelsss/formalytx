@@ -9,7 +9,9 @@ Key layout (gzip-compressed JSON):
 """
 
 import gzip
+import hashlib
 import re
+from collections.abc import Mapping
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -81,8 +83,22 @@ class SessionArchive:
         data = self._store.get(key)
         return None if data is None else decode(data, model)
 
-    def _put(self, key: str, value: BaseModel) -> None:
-        self._store.put(key, encode(value), _CONTENT_TYPE)
+    def _put(self, key: str, value: BaseModel, unless: Mapping[str, str] | None) -> bool:
+        """Write the object, unless `unless` (MD5 digests by key, see digests)
+        shows it's stored already. Whether it was written."""
+        data = encode(value)
+        if unless is not None and unless.get(key) == hashlib.md5(data).hexdigest():
+            return False
+        self._store.put(key, data, _CONTENT_TYPE)
+        return True
+
+    def digests(self, year: int, event_id: str, identifier: str) -> dict[str, str]:
+        """The MD5 digest of each stored object an export of the session writes,
+        by key: its own objects and the event's circuit info."""
+        return {
+            **self._store.digests(_session_prefix(year, event_id, identifier) + "/"),
+            **self._store.digests(circuit_key(year, event_id)),
+        }
 
     def get_session(self, year: int, event_id: str, identifier: str) -> StoredSession | None:
         return self._get(session_key(year, event_id, identifier), StoredSession)
@@ -98,17 +114,17 @@ class SessionArchive:
     def get_circuit(self, year: int, event_id: str) -> StoredCircuit | None:
         return self._get(circuit_key(year, event_id), StoredCircuit)
 
-    def put_session(self, session: StoredSession) -> None:
-        self._put(session_key(session.year, session.event_id, session.identifier), session)
+    def put_session(self, session: StoredSession, *, unless: Mapping[str, str] | None = None) -> bool:
+        return self._put(session_key(session.year, session.event_id, session.identifier), session, unless)
 
-    def put_driver_laps(self, year: int, event_id: str, identifier: str, laps: StoredDriverLaps) -> None:
-        self._put(driver_laps_key(year, event_id, identifier, laps.driver), laps)
+    def put_driver_laps(self, year: int, event_id: str, identifier: str, laps: StoredDriverLaps, *, unless: Mapping[str, str] | None = None) -> bool:
+        return self._put(driver_laps_key(year, event_id, identifier, laps.driver), laps, unless)
 
-    def put_lap_telemetry(self, year: int, event_id: str, identifier: str, telemetry: StoredLapTelemetry) -> None:
-        self._put(lap_telemetry_key(year, event_id, identifier, telemetry.driver, telemetry.lap_number), telemetry)
+    def put_lap_telemetry(self, year: int, event_id: str, identifier: str, telemetry: StoredLapTelemetry, *, unless: Mapping[str, str] | None = None) -> bool:
+        return self._put(lap_telemetry_key(year, event_id, identifier, telemetry.driver, telemetry.lap_number), telemetry, unless)
 
-    def put_circuit(self, year: int, event_id: str, circuit: StoredCircuit) -> None:
-        self._put(circuit_key(year, event_id), circuit)
+    def put_circuit(self, year: int, event_id: str, circuit: StoredCircuit, *, unless: Mapping[str, str] | None = None) -> bool:
+        return self._put(circuit_key(year, event_id), circuit, unless)
 
 
 def open_archive(settings) -> SessionArchive | None:

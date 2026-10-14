@@ -1,4 +1,5 @@
 import gzip
+import hashlib
 import io
 import json
 from datetime import datetime, timezone
@@ -237,3 +238,43 @@ def test_open_archive_prefers_r2(tmp_path):
         r2_secret_access_key=SecretStr("secret"), archive_local_dir=str(tmp_path),
     ))
     assert isinstance(archive._store, R2BlobStore)
+
+
+def test_put_skips_objects_stored_already(tmp_path, archive):
+    archive.put_session(_session())
+    digests = archive.digests(2025, "r16", "R")
+    assert list(digests) == ["v1/2025/r16/R/session.json.gz"]
+    assert not archive.put_session(_session(), unless=digests)
+    assert archive.put_session(_session(lap_drivers=["VER", "NOR"]), unless=digests)
+    assert archive.get_session(2025, "r16", "R").lap_drivers == ["VER", "NOR"]
+
+
+def test_digests_cover_the_session_and_its_event_circuit(archive):
+    archive.put_session(_session())
+    archive.put_session(_session(identifier="Q", name="Qualifying"))
+    archive.put_lap_telemetry(2025, "r16", "R", _telemetry())
+    archive.put_circuit(2025, "r16", StoredCircuit(rotation=0.0, corners=[], marshal_sectors=[], sector_distances=[]))
+    assert sorted(archive.digests(2025, "r16", "R")) == [
+        "v1/2025/r16/R/session.json.gz",
+        "v1/2025/r16/R/telemetry/VER/10.json.gz",
+        "v1/2025/r16/circuit.json.gz",
+    ]
+    assert archive.digests(2025, "r1", "R") == {}
+
+
+def test_local_digests_are_md5(tmp_path):
+    store = LocalBlobStore(str(tmp_path))
+    store.put("v1/a/b.json.gz", b"data", "application/gzip")
+    store.put("v1/ab.json.gz", b"other", "application/gzip")
+    assert store.digests("v1/a/") == {"v1/a/b.json.gz": hashlib.md5(b"data").hexdigest()}
+    assert sorted(store.digests("v1/a")) == ["v1/a/b.json.gz", "v1/ab.json.gz"]
+
+
+def test_r2_digests_are_etags(r2):
+    store, stubber = r2
+    stubber.add_response(
+        "list_objects_v2",
+        {"Contents": [{"Key": "v1/a/b.json.gz", "ETag": '"8d777f385d3dfec8815d20f7496026dc"'}], "IsTruncated": False},
+        {"Bucket": "formalytx-data", "Prefix": "v1/a/"},
+    )
+    assert store.digests("v1/a/") == {"v1/a/b.json.gz": "8d777f385d3dfec8815d20f7496026dc"}

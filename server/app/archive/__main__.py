@@ -8,13 +8,16 @@
 whose bucket is only for testing. Pass --env=prod to it to export into the
 production bucket.
 
-Sessions already exported are skipped unless their results have since become
-final. --overwrite exports them again anyway; --force also exports sessions
-that ended less than EXPORT_DELAY ago or whose end time is unknown.
+A session is exported as soon as it has ended and FastF1 can fully load it,
+and checked again on every run until its results are final, writing only what
+changed. Sessions with final results are skipped; --overwrite checks them
+again anyway, and --force also exports sessions that haven't ended or whose
+end time is unknown.
 
 A session FastF1 fails to load completely isn't exported, since it would stay
-incomplete in the archive. Run it again later; if the data doesn't exist
-upstream, --allow-incomplete exports it with the missing parts recorded.
+incomplete in the archive. Within UPLOAD_WINDOW of its end it's taken to be
+still uploading; after that it fails. Run it again later; if the data doesn't
+exist upstream, --allow-incomplete exports it with the missing parts recorded.
 
 An event's circuit info is built when its first session is exported, or a
 later one if that fails. --circuit builds only the circuit info, from the

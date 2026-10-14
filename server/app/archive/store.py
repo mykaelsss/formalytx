@@ -1,9 +1,10 @@
 """Byte storage for the session archive.
 
-The archive only needs get and put by key, so moving to another backend means
-adding one class here.
+The archive only needs get and put by key, and the MD5 of what's stored under
+a prefix, so moving to another backend means adding one class here.
 """
 
+import hashlib
 import os
 import tempfile
 from typing import Protocol
@@ -19,6 +20,10 @@ class BlobStore(Protocol):
         ...
 
     def put(self, key: str, data: bytes, content_type: str) -> None: ...
+
+    def digests(self, prefix: str) -> dict[str, str]:
+        """The MD5 hex digest of each object whose key starts with prefix."""
+        ...
 
 
 class LocalBlobStore:
@@ -58,6 +63,21 @@ class LocalBlobStore:
                 pass
             raise
 
+    def digests(self, prefix: str) -> dict[str, str]:
+        # A prefix can end partway through a name, so walk its parent folder.
+        folder = os.path.dirname(self._path(prefix + "_"))
+        found = {}
+        for root, _dirs, files in os.walk(folder):
+            for name in files:
+                if name.startswith(".tmp-"):
+                    continue
+                path = os.path.join(root, name)
+                key = os.path.relpath(path, self._root).replace(os.sep, "/")
+                if key.startswith(prefix):
+                    with open(path, "rb") as f:
+                        found[key] = hashlib.md5(f.read()).hexdigest()
+        return found
+
 
 class R2BlobStore:
     """Objects in a Cloudflare R2 bucket, through its S3-compatible API."""
@@ -93,3 +113,11 @@ class R2BlobStore:
 
     def put(self, key: str, data: bytes, content_type: str) -> None:
         self._client.put_object(Bucket=self._bucket, Key=key, Body=data, ContentType=content_type)
+
+    def digests(self, prefix: str) -> dict[str, str]:
+        # R2's ETag of an object uploaded in one part is its MD5.
+        found = {}
+        for page in self._client.get_paginator("list_objects_v2").paginate(Bucket=self._bucket, Prefix=prefix):
+            for item in page.get("Contents", []):
+                found[item["Key"]] = item["ETag"].strip('"')
+        return found

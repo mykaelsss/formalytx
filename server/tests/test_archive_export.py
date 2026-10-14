@@ -2,6 +2,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import fastf1
 import numpy as np
 import pandas as pd
 import pytest
@@ -11,8 +12,10 @@ from fastf1.logger import get_logger, soft_exceptions
 from fastf1.utils import to_timedelta
 
 from app.archive import export
+from app.archive.archive import SessionArchive
+from app.archive.store import LocalBlobStore
 from app.archive.export import (
-    EXPORT_DELAY,
+    UPLOAD_WINDOW,
     ExportOutcome,
     IncompleteLoadError,
     _capture_load_failures,
@@ -27,6 +30,7 @@ from app.archive.export import (
     session_start_utc,
     skip_reason,
 )
+from app.archive.models import StoredEvent
 from app.caching import SETTLE_BUFFER
 from app.schedule.services import CircuitInfoUnavailable, NoCircuitLayout
 
@@ -70,15 +74,15 @@ def _stored(final: bool):
 @pytest.mark.parametrize(
     "existing, now, kwargs, expected",
     [
-        # Not ready until EXPORT_DELAY after the end, unless forced.
-        (None, END + EXPORT_DELAY - timedelta(minutes=1), {}, ExportOutcome.NOT_READY),
-        (None, END + EXPORT_DELAY - timedelta(minutes=1), {"force": True}, None),
-        (None, END + EXPORT_DELAY, {}, None),
-        # Already exported and nothing new to pick up.
-        (_stored(False), END + EXPORT_DELAY, {}, ExportOutcome.ALREADY_EXPORTED),
-        (_stored(True), END + SETTLE_BUFFER, {}, ExportOutcome.ALREADY_EXPORTED),
-        # Exported before results were final, and now they are.
+        # Not ready until it has ended, unless forced.
+        (None, END - timedelta(minutes=1), {}, ExportOutcome.NOT_READY),
+        (None, END - timedelta(minutes=1), {"force": True}, None),
+        (None, END, {}, None),
+        # Checked again until its results are final, and once they are.
+        (_stored(False), END + timedelta(minutes=30), {}, None),
         (_stored(False), END + SETTLE_BUFFER, {}, None),
+        # Final results don't change any more.
+        (_stored(True), END + SETTLE_BUFFER, {}, ExportOutcome.ALREADY_EXPORTED),
         (_stored(True), END + SETTLE_BUFFER, {"overwrite": True}, None),
     ],
 )
@@ -163,7 +167,12 @@ def partly_loading_session(monkeypatch):
     monkeypatch.setattr(export, "session_start_utc", lambda s: END)
     monkeypatch.setattr(export, "session_end_utc", lambda s, start: END)
     exported = []
-    monkeypatch.setattr(export, "export_loaded_session", lambda *args, **kwargs: exported.append(kwargs))
+
+    def _export(*args, **kwargs):
+        exported.append(kwargs)
+        return ExportOutcome.EXPORTED
+
+    monkeypatch.setattr(export, "export_loaded_session", _export)
     archive = SimpleNamespace(get_session=lambda *args: None)
     return archive, exported
 
@@ -171,13 +180,20 @@ def partly_loading_session(monkeypatch):
 def test_export_session_refuses_a_partly_loaded_session(partly_loading_session):
     archive, exported = partly_loading_session
     with pytest.raises(IncompleteLoadError, match="telemetry data"):
-        export.export_session(archive, 2025, "r16", "R", now=END + EXPORT_DELAY)
+        export.export_session(archive, 2025, "r16", "R", now=END + UPLOAD_WINDOW)
+    assert exported == []
+
+
+def test_export_session_waits_for_a_session_still_uploading(partly_loading_session):
+    archive, exported = partly_loading_session
+    now = END + UPLOAD_WINDOW - timedelta(minutes=1)
+    assert export.export_session(archive, 2025, "r16", "R", now=now) is ExportOutcome.NOT_READY
     assert exported == []
 
 
 def test_export_session_allow_incomplete_records_the_failures(partly_loading_session):
     archive, exported = partly_loading_session
-    outcome = export.export_session(archive, 2025, "r16", "R", allow_incomplete=True, now=END + EXPORT_DELAY)
+    outcome = export.export_session(archive, 2025, "r16", "R", allow_incomplete=True, now=END + UPLOAD_WINDOW)
     assert outcome is ExportOutcome.EXPORTED
     assert len(exported[0]["load_failures"]) == 1
 
@@ -286,3 +302,58 @@ def test_export_circuit_without_telemetry(sessions_with_telemetry):
     with pytest.raises(CircuitInfoUnavailable, match="no finished sessions"):
         export.export_circuit(archive, 2018, "r12", [])
     assert archive.circuit is None
+
+
+@pytest.mark.parametrize("now, cached", [(END + timedelta(hours=1), False), (END + SETTLE_BUFFER, True)])
+def test_export_session_bypasses_fastf1_cache_until_results_are_final(monkeypatch, now, cached):
+    seen = []
+    session = _loaded_session(load=lambda **kwargs: seen.append(fastf1.Cache._tmp_disabled))
+    monkeypatch.setattr(export, "resolve_session", lambda *args: session)
+    monkeypatch.setattr(export, "session_start_utc", lambda s: END)
+    monkeypatch.setattr(export, "session_end_utc", lambda s, start: END)
+    monkeypatch.setattr(export, "export_loaded_session", lambda *args, **kwargs: ExportOutcome.EXPORTED)
+    archive = SimpleNamespace(get_session=lambda *args: None)
+    export.export_session(archive, 2025, "r16", "R", now=now)
+    assert seen == [not cached]
+    assert not fastf1.Cache._tmp_disabled
+
+
+@pytest.fixture
+def summary_only_session(monkeypatch):
+    """A session without laps, so its export is only session.json."""
+    monkeypatch.setattr(export, "_stored_drivers", lambda s: [])
+    monkeypatch.setattr(export, "_qualifying_parts", lambda s: {})
+    monkeypatch.setattr(export, "_telemetry_loaded", lambda s: False)
+    monkeypatch.setattr(export, "_stored_event", lambda s: StoredEvent(
+        round=16, name="Italian Grand Prix", official_name=None, country="Italy",
+        location="Monza", date="2025-09-07", format="conventional",
+    ))
+    monkeypatch.setattr(export, "_stored_weather", lambda s: None)
+    monkeypatch.setattr(export, "session_start_utc", lambda s: END)
+    monkeypatch.setattr(export, "session_end_utc", lambda s, start: END)
+    return SimpleNamespace(name="Race", event=pd.Series({"Session1": "Practice 1"}), laps=None)
+
+
+def test_export_again_writes_only_what_changed(tmp_path, summary_only_session):
+    session = summary_only_session
+    archive = SessionArchive(LocalBlobStore(str(tmp_path)))
+    first = END + timedelta(hours=1)
+
+    def export_at(now, failures=None):
+        existing = archive.get_session(2025, "r16", "R")
+        return export.export_loaded_session(
+            archive, session, 2025, "r16", "R", now=now, existing=existing, load_failures=failures
+        )
+
+    assert export_at(first) is ExportOutcome.EXPORTED
+    assert export_at(first + timedelta(hours=1)) is ExportOutcome.UNCHANGED
+    assert archive.get_session(2025, "r16", "R").exported_at == first
+
+    later = first + timedelta(hours=2)
+    assert export_at(later, failures=["weather"]) is ExportOutcome.EXPORTED
+    assert archive.get_session(2025, "r16", "R").exported_at == later
+
+    # Results becoming final changes session.json too.
+    final = END + SETTLE_BUFFER
+    assert export_at(final, failures=["weather"]) is ExportOutcome.EXPORTED
+    assert archive.get_session(2025, "r16", "R").results_final
