@@ -56,7 +56,11 @@ export default function SessionSidebar({
     [drivers],
   );
 
-  const { data: schedule, isLoading: isLoadingSchedule } = useSchedule(year);
+  const {
+    data: schedule,
+    isLoading: isLoadingSchedule,
+    isError: isScheduleError,
+  } = useSchedule(year);
   const { data: eventSchedule, isLoading: isLoadingRound } = useEventSchedule(
     year,
     event,
@@ -126,14 +130,11 @@ export default function SessionSidebar({
     }
   };
 
-  const eventNameCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    if (!schedule?.events) return counts;
-    for (const e of schedule.events) {
-      counts.set(e.event_name, (counts.get(e.event_name) ?? 0) + 1);
-    }
-    return counts;
-  }, [schedule]);
+  // The API lists events in calendar order; show the most recent first.
+  const events = useMemo(
+    () => (schedule?.events ? [...schedule.events].reverse() : []),
+    [schedule],
+  );
 
   const toggleQualiSession = (s: QualiSession) => {
     setSelectedQualiSessions(prev => {
@@ -180,11 +181,19 @@ export default function SessionSidebar({
           </span>
           <Select
             value={event}
-            disabled={isLoadingSchedule}
+            disabled={isLoadingSchedule || isScheduleError}
             onValueChange={(val) => setEvent(val)}
           >
             <SelectTrigger className="w-full rounded-none font-mono text-xs text-text-primary border-surface-border bg-surface-card">
-              <SelectValue placeholder="Select event" />
+              <SelectValue
+                placeholder={
+                  isLoadingSchedule
+                    ? "Loading events…"
+                    : isScheduleError
+                      ? "Couldn't load events"
+                      : "Select event"
+                }
+              />
             </SelectTrigger>
             <SelectContent
               side="bottom"
@@ -193,13 +202,10 @@ export default function SessionSidebar({
             >
               <SelectGroup>
                 <SelectLabel>Schedule</SelectLabel>
-                {schedule?.events?.map((e) => {
-                  const isDup = (eventNameCounts.get(e.event_name) ?? 0) > 1;
-                  const suffix =
-                    isDup && e.event_format === "testing"
-                      ? ` ${e.identifier.slice(1)}`
-                      : "";
+                {events.map((e) => {
                   const isDisabled = e.status === "upcoming";
+                  // Testing events have no round, so they're tagged T1, T2...
+                  const tag = e.identifier.toUpperCase();
                   const item = (
                     <SelectItem
                       key={e.identifier}
@@ -207,8 +213,8 @@ export default function SessionSidebar({
                       value={e.identifier}
                       disabled={isDisabled}
                     >
-                      {e.event_name}
-                      {suffix}
+                      <span className="w-7 shrink-0 text-text-muted">{tag}</span>
+                      <span className="truncate">{e.event_name}</span>
                     </SelectItem>
                   );
                   if (!isDisabled) return item;
