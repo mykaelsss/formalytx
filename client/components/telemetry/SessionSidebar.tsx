@@ -25,8 +25,9 @@ import {
   serializeSelectedLaps,
 } from "@/lib/selectedLaps";
 import { useQueryClient } from "@tanstack/react-query";
-import { useQueryState, parseAsArrayOf} from "nuqs";
-import { DEFAULT_NUQS_OPTIONS, parseAsQualiSession } from "@/lib/constants";
+import { useQueryState } from "nuqs";
+import { DEFAULT_NUQS_OPTIONS } from "@/lib/constants";
+import { useQualiSessions } from "@/lib/hooks/useQualiSessions";
 
 const YEARS = Array.from({ length: new Date().getFullYear() - 2017 }, (_, i) =>
   String(new Date().getFullYear() - i),
@@ -48,10 +49,7 @@ export default function SessionSidebar({
   const [drivers, setDrivers] = useQueryState("drivers", DEFAULT_NUQS_OPTIONS);
   const [laps, setLaps] = useQueryState("laps", DEFAULT_NUQS_OPTIONS);
   const [, setTab] = useQueryState("tab", DEFAULT_NUQS_OPTIONS);
-  const defaultQualiSessions: QualiSession[] = ["Q", "SQ"].includes(session.toUpperCase()) 
-    ? ["Q1", "Q2", "Q3"] 
-    : []
-  const [selectedQualiSessions, setSelectedQualiSessions] = useQueryState("qualiSessions", parseAsArrayOf(parseAsQualiSession).withDefault(defaultQualiSessions).withOptions(DEFAULT_NUQS_OPTIONS))
+  const [selectedQualiSessions, setSelectedQualiSessions] = useQualiSessions();
 
   const selectedDrivers = useMemo(
     () => (drivers ? drivers.split(",") : []),
@@ -236,10 +234,8 @@ export default function SessionSidebar({
             disabled={isLoadingRound}
             onValueChange={(val) => {
               setSession(val)
-              if (!selectedQualiSessions.length && ['Q', 'SQ'].includes(val)) {
-                setSelectedQualiSessions(['Q1', 'Q2', 'Q3'])
-              } else if (!['Q', 'SQ'].includes(val)) {
-                setSelectedQualiSessions([])
+              if (!['Q', 'SQ'].includes(val)) {
+                setSelectedQualiSessions(null)
               }
             }}
           >

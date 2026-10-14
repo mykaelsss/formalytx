@@ -9,7 +9,6 @@ import { useChartSettings } from "@/lib/hooks/useChartSettings";
 import {
   CHART_STORAGE_KEYS,
   DEFAULT_NUQS_OPTIONS,
-  parseAsQualiSession,
 } from "@/lib/constants";
 import { toggleLap } from "@/lib/selectedLaps";
 import { useSessionLaps } from "@/lib/hooks/useSessionLaps";
@@ -18,7 +17,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import TyreBadge from "./TyreBadge";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CompoundColor } from "@/lib/compounds";
-import { parseAsArrayOf, useQueryState } from "nuqs";
+import { useQueryState } from "nuqs";
+import { useQualiSessions } from "@/lib/hooks/useQualiSessions";
 import { useLapAnalysis } from "@/lib/hooks/useLapAnalysis";
 
 interface LapChartProps {
@@ -52,15 +52,7 @@ export default function LapChart({ teams }: LapChartProps) {
   const [drivers] = useQueryState("drivers", DEFAULT_NUQS_OPTIONS);
   const [, setLaps] = useQueryState("laps", DEFAULT_NUQS_OPTIONS);
   const [, setTab] = useQueryState("tab", DEFAULT_NUQS_OPTIONS);
-  const defaultQualiSessions: QualiSession[] = ["Q", "SQ"].includes(session.toUpperCase())
-    ? ["Q1", "Q2", "Q3"]
-    : [];
-  const [selectedQualiSessions] = useQueryState(
-    "qualiSessions",
-    parseAsArrayOf(parseAsQualiSession)
-      .withDefault(defaultQualiSessions)
-      .withOptions(DEFAULT_NUQS_OPTIONS),
-  );
+  const [selectedQualiSessions] = useQualiSessions();
 
   const selectedDrivers = useMemo(
     () => (drivers ? drivers.split(",") : []),

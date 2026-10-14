@@ -12,8 +12,9 @@ import {
 } from "@/lib/selectedLaps";
 import { lapTimeToMs } from "@/lib/format";
 import { useEventSchedule } from "@/lib/hooks/useEventSchedule";
-import { parseAsArrayOf, useQueryState } from "nuqs";
-import { DEFAULT_NUQS_OPTIONS, parseAsQualiSession } from "@/lib/constants";
+import { useQueryState } from "nuqs";
+import { DEFAULT_NUQS_OPTIONS } from "@/lib/constants";
+import { useQualiSessions } from "@/lib/hooks/useQualiSessions";
 import { useLapAnalysis } from "@/lib/hooks/useLapAnalysis";
 
 function formatDelta(ms: number): string {
@@ -32,15 +33,7 @@ export default function LapTable({ teams }: LapTableProps) {
   const [drivers] = useQueryState("drivers", DEFAULT_NUQS_OPTIONS);
   const [, setLaps] = useQueryState("laps", DEFAULT_NUQS_OPTIONS);
   const [, setTab] = useQueryState("tab", DEFAULT_NUQS_OPTIONS);
-  const defaultQualiSessions: QualiSession[] = ["Q", "SQ"].includes(session.toUpperCase())
-    ? ["Q1", "Q2", "Q3"]
-    : [];
-  const [selectedQualiSessions] = useQueryState(
-    "qualiSessions",
-    parseAsArrayOf(parseAsQualiSession)
-      .withDefault(defaultQualiSessions)
-      .withOptions(DEFAULT_NUQS_OPTIONS),
-  );
+  const [selectedQualiSessions] = useQualiSessions();
 
   const { data: eventSchedule } = useEventSchedule(year, event);
   const sessionStatus = eventSchedule?.sessions.find(
