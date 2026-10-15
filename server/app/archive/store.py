@@ -6,6 +6,7 @@ a prefix, so moving to another backend means adding one class here.
 
 import hashlib
 import os
+import socket
 import tempfile
 from typing import Protocol
 
@@ -79,10 +80,25 @@ class LocalBlobStore:
         return found
 
 
-# A pooled connection left idle can be dropped on the way to R2 without either
-# end hearing about it, and a request sent on one waits out the whole read
-# timeout before botocore retries on a new connection. Archive objects are
-# small and R2 serves them in well under a second, so reads give up quickly.
+# Somewhere between the API and R2, a connection left idle for some minutes is
+# dropped without either end hearing about it: a request sent on it later gets
+# no reply, not even a reset. TCP keepalive probes keep pooled connections from
+# going idle, and if one is dropped anyway, the failed probes close it before
+# the pool hands it out. The kernel's default waits two hours before probing.
+KEEPALIVE_IDLE_SECONDS = 60
+KEEPALIVE_INTERVAL_SECONDS = 10
+KEEPALIVE_PROBES = 3
+# Linux calls the idle time TCP_KEEPIDLE, macOS TCP_KEEPALIVE.
+_TCP_KEEPIDLE = getattr(socket, "TCP_KEEPIDLE", None) or getattr(socket, "TCP_KEEPALIVE")
+KEEPALIVE_SOCKET_OPTIONS = [
+    (socket.IPPROTO_TCP, _TCP_KEEPIDLE, KEEPALIVE_IDLE_SECONDS),
+    (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, KEEPALIVE_INTERVAL_SECONDS),
+    (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, KEEPALIVE_PROBES),
+]
+
+# Should a request still go out on a dropped connection, it waits out the read
+# timeout before botocore retries on a new one. Archive objects are small and
+# R2 serves them in well under a second, so reads give up quickly.
 READ_TIMEOUT_SECONDS = 5
 # Uploads and listings keep a longer timeout: an export uploads many objects at
 # once, possibly over a slow link.
@@ -90,7 +106,7 @@ WRITE_TIMEOUT_SECONDS = 30
 
 
 def _r2_client(account_id: str, access_key_id: str, secret_access_key: str, read_timeout: float):
-    return boto3.client(
+    client = boto3.client(
         "s3",
         endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
         aws_access_key_id=access_key_id,
@@ -102,11 +118,17 @@ def _r2_client(account_id: str, access_key_id: str, secret_access_key: str, read
             retries={"max_attempts": 5, "mode": "standard"},
             connect_timeout=10,
             read_timeout=read_timeout,
+            tcp_keepalive=True,
             # R2 doesn't support every checksum newer boto3 sends by default.
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
         ),
     )
+    # botocore only turns keepalive on, leaving its timing to the kernel, and
+    # has no option for it. Its HTTP session hands this list of socket options
+    # to every connection it opens, so add the timing to it.
+    client._endpoint.http_session._socket_options.extend(KEEPALIVE_SOCKET_OPTIONS)
+    return client
 
 
 class R2BlobStore:

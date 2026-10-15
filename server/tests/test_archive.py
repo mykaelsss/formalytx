@@ -2,6 +2,7 @@ import gzip
 import hashlib
 import io
 import json
+import socket
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -34,7 +35,13 @@ from app.archive.models import (
     StoredScheduleSession,
     StoredSession,
 )
-from app.archive.store import READ_TIMEOUT_SECONDS, WRITE_TIMEOUT_SECONDS, LocalBlobStore, R2BlobStore
+from app.archive.store import (
+    KEEPALIVE_SOCKET_OPTIONS,
+    READ_TIMEOUT_SECONDS,
+    WRITE_TIMEOUT_SECONDS,
+    LocalBlobStore,
+    R2BlobStore,
+)
 
 _CEST = timezone(timedelta(hours=2))
 
@@ -243,6 +250,22 @@ def test_r2_reads_give_up_sooner_than_uploads():
     assert store._reads.meta.config.read_timeout == READ_TIMEOUT_SECONDS
     assert store._writes.meta.config.read_timeout == WRITE_TIMEOUT_SECONDS
     assert READ_TIMEOUT_SECONDS < WRITE_TIMEOUT_SECONDS
+
+
+def test_r2_connections_probe_while_idle():
+    store = R2BlobStore("account", "key", "secret", "formalytx-data")
+    with socket.create_server(("127.0.0.1", 0)) as server:
+        url = f"http://127.0.0.1:{server.getsockname()[1]}"
+        for client in (store._reads, store._writes):
+            # Open a connection the way a request would: from the client's pool.
+            conn = client._endpoint.http_session._manager.connection_from_url(url)._get_conn()
+            conn.connect()
+            try:
+                assert conn.sock.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE)
+                for level, option, value in KEEPALIVE_SOCKET_OPTIONS:
+                    assert conn.sock.getsockopt(level, option) == value
+            finally:
+                conn.close()
 
 
 def test_r2_put(r2):
