@@ -409,6 +409,12 @@ def test_health_returns_ok(client):
     assert resp.json() == {"status": "ok"}
 
 
+def test_root_redirects_to_docs(client):
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/docs"
+
+
 def test_detailed_defaults_weather_and_laps_on(client, cache_calls, monkeypatch):
     seen = {}
 

@@ -10,7 +10,7 @@ import fastf1
 import requests
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from fastf1.exceptions import (
     DataNotLoadedError,
@@ -160,3 +160,9 @@ class Health(BaseModel):
 @app.get("/health", response_model=Health)
 def health():
     return {"status": "ok"}
+
+
+# The API has nothing to show at its root, so send visitors to the reference.
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse("/docs")
