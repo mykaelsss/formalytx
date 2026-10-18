@@ -55,4 +55,6 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
-CMD ["sh", "-c", "exec fastapi run --host 0.0.0.0 --port ${PORT:-8000} app/main.py"]
+# Each uvicorn worker is its own Python process, so more workers use more than
+# one CPU core (the GIL holds a single process to about one).
+CMD ["sh", "-c", "exec fastapi run --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} app/main.py"]
