@@ -152,7 +152,7 @@ Circuits built through FastF1 are kept, and events without one are re-checked af
 
 ### Secrets
 
-Server secrets live in Infisical, in the project linked by `server/.infisical.json`.
+Server secrets live in Infisical, in the project linked by `server/.infisical.yaml`.
 Run server commands through `infisical run --` from `server/` to supply them.
 `server/.env.example` lists the variables the server reads.
 
