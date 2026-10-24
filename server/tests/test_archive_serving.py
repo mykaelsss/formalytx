@@ -14,6 +14,7 @@ from app.archive.models import (
 )
 from app.archive.reader import ArchiveReader
 from app.archive.store import LocalBlobStore
+from app.fastf1_loader import SessionDataUnavailable
 from app.utils import ExpiringLRU
 from app.schedule import services as schedule
 from app.schedule.services import CircuitInfoUnavailable, NoCircuitLayout, SessionDetailConfig
@@ -230,11 +231,14 @@ def live_circuits(monkeypatch):
     loaded = []
     monkeypatch.setattr(schedule, "resolve_session", lambda year, event_id, identifier: identifier)
 
+    built = {}
+
     def _load(session, year, event_id, identifier, **kwargs):
         loaded.append(identifier)
+        if isinstance(built.get(identifier), SessionDataUnavailable):
+            raise built[identifier]
 
     monkeypatch.setattr(schedule, "locked_load", _load)
-    built = {}
 
     def _build(identifier):
         result = built.get(identifier, CircuitInfoUnavailable(f"no telemetry in {identifier}"))
@@ -273,6 +277,24 @@ def test_circuit_info_unavailable_is_remembered_for_a_while(live_circuits, monke
     assert loaded == ["FP1", "FP2", "FP3"]
     built["FP1"] = {"from": "FP1"}
     now[0] += schedule._CIRCUIT_FAILURE_TTL_SECONDS
+    assert schedule.get_circuit_info(2026, "r14") == {"from": "FP1"}
+
+
+def test_circuit_info_skips_sessions_that_load_nothing(live_circuits):
+    built, loaded = live_circuits
+    built.update(FP1=SessionDataUnavailable("no drivers in FP1"), FP2={"from": "FP2"})
+    assert schedule.get_circuit_info(2026, "r14") == {"from": "FP2"}
+    assert loaded == ["FP1", "FP2"]
+
+
+def test_circuit_info_unavailable_session_is_retried(live_circuits):
+    """A session that loaded nothing may have its data later, so the failure
+    isn't remembered like a missing circuit."""
+    built, loaded = live_circuits
+    built.update(FP1=SessionDataUnavailable("no drivers in FP1"))
+    with pytest.raises(SessionDataUnavailable, match="FP1"):
+        schedule.get_circuit_info(2026, "r14")
+    built["FP1"] = {"from": "FP1"}
     assert schedule.get_circuit_info(2026, "r14") == {"from": "FP1"}
 
 

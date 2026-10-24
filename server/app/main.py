@@ -16,7 +16,6 @@ from fastf1.exceptions import (
     DataNotLoadedError,
     ErgastError,
     FastF1CriticalError,
-    InvalidSessionError,
     NoLapDataError,
     RateLimitExceededError,
 )
@@ -26,7 +25,13 @@ from app.archive import reader
 from app.archive.archive import open_archive
 from app.archive.reader import ArchiveReader, ArchiveUnavailable
 from app.etag import ETagMiddleware
-from app.fastf1_loader import install_request_timeouts, set_cache_dir, start_pruner
+from app.fastf1_loader import (
+    SessionDataUnavailable,
+    install_request_timeouts,
+    set_cache_dir,
+    start_pruner,
+    warn_if_no_f1_account,
+)
 from app.sessions.routes import router as session_router
 from app.schedule.routes import router as schedule_router
 from app.schedule.services import CircuitInfoUnavailable
@@ -49,12 +54,13 @@ def get_settings():
 async def lifespan(app: FastAPI):
     settings = get_settings()
     os.makedirs(settings.fastf1_cache_dir, exist_ok=True)
-    fastf1.Cache.enable_cache(settings.fastf1_cache_dir)
+    fastf1.Cache.configure(cache_dir=settings.fastf1_cache_dir)
     install_request_timeouts(
         settings.upstream_connect_timeout_seconds,
         settings.upstream_read_timeout_seconds,
     )
     set_cache_dir(settings.fastf1_cache_dir)
+    warn_if_no_f1_account()
     archive = open_archive(settings)
     reader.configure(ArchiveReader(archive) if archive is not None else None)
     if archive is None:
@@ -132,7 +138,17 @@ async def _archive_unavailable(request: Request, exc: Exception) -> JSONResponse
     )
 
 
-for _exc in (ValueError, InvalidSessionError, NoLapDataError, SessionNotAvailableError, DataNotLoadedError, CircuitInfoUnavailable):
+async def _session_data_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    # Live timing may have the data later, so the CDN mustn't keep this answer.
+    logger.error("Session data unavailable for %s: %s", request.url.path, exc)
+    return _error(
+        503,
+        "This session's data isn't available yet. Please try again later.",
+        headers={"Retry-After": "60", "Cache-Control": "no-store"},
+    )
+
+
+for _exc in (ValueError, NoLapDataError, SessionNotAvailableError, DataNotLoadedError, CircuitInfoUnavailable):
     app.add_exception_handler(_exc, _not_found)
 app.add_exception_handler(RateLimitExceededError, _rate_limited)
 app.add_exception_handler(FastF1CriticalError, _upstream_error)
@@ -140,6 +156,7 @@ app.add_exception_handler(ErgastError, _upstream_error)
 app.add_exception_handler(requests.RequestException, _upstream_request_failed)
 app.add_exception_handler(LockWaitTimeout, _lock_wait_timeout)
 app.add_exception_handler(ArchiveUnavailable, _archive_unavailable)
+app.add_exception_handler(SessionDataUnavailable, _session_data_unavailable)
 
 app.add_middleware(ETagMiddleware)
 

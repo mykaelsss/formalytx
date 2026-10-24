@@ -168,6 +168,8 @@ infisical run -- docker compose up --build --watch
 The API will be available at `http://localhost:80` (via nginx) or `http://localhost:8000` (direct).
 Running through `infisical run` passes the R2 credentials into the container, so archived sessions are served from the dev bucket.
 Without them, every session is loaded through FastF1.
+Sessions not in the archive are loaded from F1's live timing, which needs an F1 TV Access subscription.
+FastF1 signs in with the account in `F1_USERNAME` and `F1_PASSWORD`, and without them it can't load any session.
 
 ### Session archive
 

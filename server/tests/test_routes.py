@@ -5,12 +5,12 @@ from fastf1.exceptions import (
     DataNotLoadedError,
     ErgastError,
     FastF1CriticalError,
-    InvalidSessionError,
     NoLapDataError,
     RateLimitExceededError,
 )
 
 from app.archive.reader import ArchiveUnavailable
+from app.fastf1_loader import SessionDataUnavailable
 from app.main import app
 from app.schedule.services import CircuitInfoUnavailable, NoCircuitLayout, SessionDetailConfig
 from app.utils import LockWaitTimeout
@@ -465,7 +465,6 @@ def test_year_must_be_an_integer(client):
     "exc, status",
     [
         (ValueError("bad round"), 404),
-        (InvalidSessionError("no such session"), 404),
         (NoLapDataError("no laps"), 404),
         (DataNotLoadedError("not loaded"), 404),
         (CircuitInfoUnavailable("no circuit info"), 404),
@@ -478,6 +477,7 @@ def test_year_must_be_an_integer(client):
         (requests.ConnectionError("refused"), 502),
         (LockWaitTimeout("still loading"), 503),
         (ArchiveUnavailable("r2 down"), 503),
+        (SessionDataUnavailable("no drivers"), 503),
     ],
     ids=lambda v: type(v).__name__ if isinstance(v, Exception) else str(v),
 )
@@ -527,6 +527,19 @@ def test_archive_unavailable_asks_client_to_retry(client, cache_calls, monkeypat
 
     assert resp.status_code == 503
     assert resp.headers["Retry-After"] == "30"
+
+
+def test_session_data_unavailable_is_not_cached(client, cache_calls, monkeypatch):
+    def _raise(*a, **kw):
+        raise SessionDataUnavailable("FastF1 loaded no drivers for 2026 r18 FP1")
+
+    monkeypatch.setattr("app.sessions.routes.get_session", _raise)
+
+    resp = client.get("/sessions/2026/r18/FP1")
+
+    assert resp.status_code == 503
+    assert resp.headers["Retry-After"] == "60"
+    assert resp.headers["Cache-Control"] == "no-store"
 
 
 def test_http_exception_from_service_is_preserved(client, cache_calls, monkeypatch):

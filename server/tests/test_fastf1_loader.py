@@ -3,6 +3,7 @@ import socket
 import threading
 import time
 from collections import namedtuple
+from types import SimpleNamespace
 
 import fastf1
 import pytest
@@ -153,10 +154,12 @@ class _FakeSession:
         tracker: "_ConcurrencyTracker | None" = None,
         gate: threading.Event | None = None,
         hold: float = 0.0,
+        drivers: list[str] | None = None,
     ):
         self._tracker = tracker
         self._gate = gate
         self._hold = hold
+        self.drivers = ["1"] if drivers is None else drivers
         self.api_path = None
         self.load_calls: list[dict] = []
 
@@ -267,6 +270,45 @@ def test_locked_load_loads_every_time():
     assert second.load_calls == [{"laps": True, "telemetry": True}]
 
 
+def test_locked_load_raises_when_no_drivers_loaded():
+    """FastF1 logs a failed load (e.g. live timing refusing an unauthenticated
+    request) and leaves the session empty, which mustn't pass for a session
+    without drivers."""
+    with pytest.raises(fastf1_loader.SessionDataUnavailable, match="2026 r18 FP1"):
+        fastf1_loader.locked_load(_FakeSession(drivers=[]), 2026, "r18", "FP1", laps=True)
+
+
+def test_locked_load_raises_when_results_not_loaded():
+    class _NotLoaded:
+        api_path = None
+
+        def load(self, **kwargs):
+            pass
+
+        @property
+        def drivers(self):
+            raise fastf1.exceptions.DataNotLoadedError("not loaded")
+
+    with pytest.raises(fastf1_loader.SessionDataUnavailable):
+        fastf1_loader.locked_load(_NotLoaded(), 2026, "r18", "FP1", laps=True)
+
+
+@pytest.mark.parametrize(
+    "env, warned",
+    [({}, True), ({"F1_USERNAME": "a@b.c"}, True), ({"F1_USERNAME": "a@b.c", "F1_PASSWORD": "pw"}, False)],
+)
+def test_warn_if_no_f1_account(monkeypatch, caplog, env, warned):
+    monkeypatch.delenv("F1_USERNAME", raising=False)
+    monkeypatch.delenv("F1_PASSWORD", raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    with caplog.at_level("WARNING", logger="uvicorn.error"):
+        fastf1_loader.warn_if_no_f1_account()
+
+    assert ("F1_USERNAME and F1_PASSWORD are not set" in caplog.text) == warned
+
+
 @pytest.fixture
 def unresponsive_url():
     """An HTTP endpoint that completes the TCP handshake (via the listen
@@ -278,10 +320,10 @@ def unresponsive_url():
     server.close()
 
 
-def test_timeout_adapter_bounds_requests_to_an_unresponsive_upstream(unresponsive_url):
+def test_default_timeout_bounds_requests_to_an_unresponsive_upstream(unresponsive_url):
     # Same session type FastF1 uses for its HTTP cache.
     session = requests_cache.CachedSession(backend="memory")
-    session.mount("http://", fastf1_loader._TimeoutHTTPAdapter((1.0, 0.2)))
+    fastf1_loader._apply_default_timeout(session.get_adapter("http://"), (1.0, 0.2))
 
     started = time.monotonic()
     with pytest.raises(requests.ReadTimeout):
@@ -289,10 +331,11 @@ def test_timeout_adapter_bounds_requests_to_an_unresponsive_upstream(unresponsiv
     assert time.monotonic() - started < 2.0
 
 
-def test_timeout_adapter_keeps_an_explicit_timeout(monkeypatch):
+def test_default_timeout_keeps_an_explicit_timeout(monkeypatch):
     seen = []
     monkeypatch.setattr(HTTPAdapter, "send", lambda self, request, **kw: seen.append(kw["timeout"]))
-    adapter = fastf1_loader._TimeoutHTTPAdapter((1.0, 2.0))
+    adapter = HTTPAdapter()
+    fastf1_loader._apply_default_timeout(adapter, (1.0, 2.0))
 
     adapter.send(object())
     adapter.send(object(), timeout=5)
@@ -300,28 +343,72 @@ def test_timeout_adapter_keeps_an_explicit_timeout(monkeypatch):
     assert seen == [(1.0, 2.0), 5]
 
 
-def test_install_request_timeouts_mounts_on_both_fastf1_sessions(monkeypatch):
+class _SigningAdapter(HTTPAdapter):
+    """Stands in for an adapter FastF1 mounts itself, like the one that signs
+    live timing requests in to the F1 account."""
+
+    def __init__(self, seen: list):
+        super().__init__()
+        self._seen = seen
+
+    def send(self, request, **kwargs):
+        self._seen.append(("signed", kwargs["timeout"]))
+
+
+def test_install_request_timeouts_covers_every_adapter_on_both_fastf1_sessions(monkeypatch):
+    seen = []
+    monkeypatch.setattr(HTTPAdapter, "send", lambda self, request, **kw: seen.append(("plain", kw["timeout"])))
     plain, cached = requests.Session(), requests.Session()
+    for session in (plain, cached):
+        session.mount("https://livetiming.example.com/", _SigningAdapter(seen))
     monkeypatch.setattr(fastf1.Cache, "_requests_session", plain)
     monkeypatch.setattr(fastf1.Cache, "_requests_session_cached", cached)
 
     fastf1_loader.install_request_timeouts(3.0, 7.0)
 
     for session in (plain, cached):
-        for url in ("https://example.com/", "http://example.com/"):
-            adapter = session.get_adapter(url)
-            assert isinstance(adapter, fastf1_loader._TimeoutHTTPAdapter)
-            assert adapter._default_timeout == (3.0, 7.0)
+        for url in ("https://example.com/", "http://example.com/", "https://livetiming.example.com/x"):
+            session.get_adapter(url).send(object())
+    assert seen == [
+        ("plain", (3.0, 7.0)), ("plain", (3.0, 7.0)), ("signed", (3.0, 7.0)),
+    ] * 2
 
 
 def test_install_request_timeouts_skips_a_missing_session(monkeypatch):
+    seen = []
+    monkeypatch.setattr(HTTPAdapter, "send", lambda self, request, **kw: seen.append(kw["timeout"]))
     plain = requests.Session()
     monkeypatch.setattr(fastf1.Cache, "_requests_session", plain)
     monkeypatch.setattr(fastf1.Cache, "_requests_session_cached", None)
 
     fastf1_loader.install_request_timeouts(3.0, 7.0)
 
-    assert isinstance(plain.get_adapter("https://example.com/"), fastf1_loader._TimeoutHTTPAdapter)
+    plain.get_adapter("https://example.com/").send(object())
+    assert seen == [(3.0, 7.0)]
+
+
+def test_install_request_timeouts_keeps_fastf1_live_timing_sign_in(monkeypatch):
+    """FastF1 signs live timing requests in through its own adapter, which
+    must keep handling them once they have a timeout."""
+    from fastf1.internals.f1account import LIVETIMING_URL, LivetimingAuthAdapter
+
+    monkeypatch.setattr(fastf1.Cache, "_requests_session", type(fastf1.Cache._requests_session)())
+    monkeypatch.setattr(fastf1.Cache, "_requests_session_cached", None)
+    seen = []
+
+    def _send(self, request, **kwargs):
+        seen.append(kwargs["timeout"])
+        return SimpleNamespace(status_code=200)
+
+    monkeypatch.setattr(HTTPAdapter, "send", _send)
+    monkeypatch.setattr(LivetimingAuthAdapter, "_get_token", lambda self: None)
+
+    fastf1_loader.install_request_timeouts(3.0, 7.0)
+
+    adapter = fastf1.Cache._requests_session.get_adapter(LIVETIMING_URL + "static/2026/Index.json")
+    assert isinstance(adapter, LivetimingAuthAdapter)
+    adapter.send(requests.Request("GET", LIVETIMING_URL).prepare())
+    assert seen == [(3.0, 7.0)]
 
 
 def test_fastf1_still_exposes_the_sessions_we_patch():

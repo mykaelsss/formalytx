@@ -9,7 +9,7 @@ import pytest
 import requests
 from fastf1.exceptions import DataNotLoadedError
 from fastf1.logger import get_logger, soft_exceptions
-from fastf1.utils import to_timedelta
+from fastf1.internals.parsing_helpers import to_timedelta
 
 from app.archive import export
 from app.archive.archive import SessionArchive
@@ -334,7 +334,7 @@ def test_export_circuit_without_telemetry(sessions_with_telemetry):
 @pytest.mark.parametrize("now, cached", [(END + timedelta(hours=1), False), (END + SETTLE_BUFFER, True)])
 def test_export_session_bypasses_fastf1_cache_until_results_are_final(monkeypatch, now, cached):
     seen = []
-    session = _loaded_session(load=lambda **kwargs: seen.append(fastf1.Cache._tmp_disabled))
+    session = _loaded_session(load=lambda **kwargs: seen.append(fastf1.Cache._http_tmp_disabled and fastf1.Cache._func_tmp_disabled))
     monkeypatch.setattr(export, "resolve_session", lambda *args: session)
     monkeypatch.setattr(export, "session_start_utc", lambda s: END)
     monkeypatch.setattr(export, "session_end_utc", lambda s, start: END)
@@ -342,7 +342,7 @@ def test_export_session_bypasses_fastf1_cache_until_results_are_final(monkeypatc
     archive = SimpleNamespace(get_session=lambda *args: None)
     export.export_session(archive, 2025, "r16", "R", now=now)
     assert seen == [not cached]
-    assert not fastf1.Cache._tmp_disabled
+    assert not (fastf1.Cache._http_tmp_disabled or fastf1.Cache._func_tmp_disabled)
 
 
 @pytest.fixture
