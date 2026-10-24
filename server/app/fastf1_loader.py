@@ -5,8 +5,9 @@ import threading
 import uuid
 
 import fastf1
+from fastf1.exceptions import DataNotLoadedError
 from app.utils import KeyLockRegistry
-from requests.adapters import HTTPAdapter
+from requests.adapters import BaseAdapter
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -17,32 +18,45 @@ _prune_wake: threading.Event | None = None
 _high_water: float = 0.0
 
 
+class SessionDataUnavailable(Exception):
+    """FastF1 loaded no drivers for the session: live timing has no data for it
+    yet, or refused the request, since it needs an F1 TV account."""
+
+
+def warn_if_no_f1_account() -> None:
+    """Live timing needs an F1 TV account, which FastF1 signs in to with these
+    variables. Without them it sends its requests unauthenticated, live timing
+    refuses them, and every load comes back empty."""
+    if not (os.environ.get("F1_USERNAME") and os.environ.get("F1_PASSWORD")):
+        logger.warning("F1_USERNAME and F1_PASSWORD are not set, so FastF1 can't load any session from live timing")
+
+
 def set_cache_dir(cache_dir: str) -> None:
     global _active_cache_dir
     _active_cache_dir = cache_dir
 
 
-class _TimeoutHTTPAdapter(HTTPAdapter):
-    """Applies a default (connect, read) timeout to requests that don't set one.
+def _apply_default_timeout(adapter: BaseAdapter, default: tuple[float, float]) -> None:
+    """Make the adapter use `default` as the (connect, read) timeout of requests
+    that don't set one.
 
     FastF1 never passes a timeout, so without this an upstream that accepts the
-    connection but never answers blocks the calling thread forever.
+    connection but never answers blocks the calling thread forever. The adapter
+    is wrapped rather than replaced, since FastF1 mounts its own, e.g. the one
+    that signs live timing requests in to the F1 account.
     """
+    send = adapter.send
 
-    def __init__(self, timeout: tuple[float, float], **kwargs):
-        self._default_timeout = timeout
-        super().__init__(**kwargs)
+    def send_with_default_timeout(request, timeout=None, **kwargs):
+        return send(request, timeout=default if timeout is None else timeout, **kwargs)
 
-    def send(self, request, timeout=None, **kwargs):
-        if timeout is None:
-            timeout = self._default_timeout
-        return super().send(request, timeout=timeout, **kwargs)
+    adapter.send = send_with_default_timeout
 
 
 def install_request_timeouts(connect: float, read: float) -> None:
-    """Mount the default-timeout adapter on FastF1's HTTP sessions.
+    """Apply a default timeout to every adapter on FastF1's HTTP sessions.
 
-    Call after fastf1.Cache.enable_cache(), which creates the cached session.
+    Call after fastf1.Cache.configure(), which creates the cached session.
     Relies on FastF1 internals, so a missing session is logged loudly rather
     than crashing startup after a FastF1 upgrade.
     """
@@ -51,8 +65,8 @@ def install_request_timeouts(connect: float, read: float) -> None:
         if session is None:
             logger.warning("FastF1 Cache.%s not found - its requests have no timeout", name)
             continue
-        for prefix in ("https://", "http://"):
-            session.mount(prefix, _TimeoutHTTPAdapter((connect, read)))
+        for adapter in session.adapters.values():
+            _apply_default_timeout(adapter, (connect, read))
 
 
 def _session_cache_dir(session) -> str | None:
@@ -81,6 +95,9 @@ def locked_load(session, year: int, event_id: str, identifier, **load_kwargs) ->
     loads of the same session wait for the first, which fills FastF1's disk
     cache, instead of all fetching it upstream and holding it in memory at
     once. Loads of different sessions run in parallel.
+
+    FastF1 logs a failed load instead of raising, leaving the session empty, so
+    a load that found no drivers raises SessionDataUnavailable.
     """
     key = (year, event_id, str(identifier).upper())
     with _session_locks.get(key):
@@ -89,6 +106,15 @@ def locked_load(session, year: int, event_id: str, identifier, **load_kwargs) ->
     if leaf and os.path.isdir(leaf):
         _touch(leaf)
     _maybe_wake_pruner()
+    if not _has_drivers(session):
+        raise SessionDataUnavailable(f"FastF1 loaded no drivers for {year} {event_id} {identifier}")
+
+
+def _has_drivers(session) -> bool:
+    try:
+        return len(session.drivers) > 0
+    except (DataNotLoadedError, KeyError):
+        return False
 
 
 def _disk_used_fraction(cache_dir: str) -> float | None:

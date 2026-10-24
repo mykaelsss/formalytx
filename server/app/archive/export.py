@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 import fastf1
 import numpy as np
 import pandas as pd
-from fastf1 import utils as fastf1_utils
+from fastf1.internals import parsing_helpers as fastf1_parsing
 from fastf1.core import Lap, Session
 from fastf1.exceptions import DataNotLoadedError
 
@@ -490,7 +490,7 @@ class _LoadFailures(logging.Handler):
     aren't failures.
     """
 
-    _EXPECTED = frozenset({fastf1_utils._logger.name})
+    _EXPECTED = frozenset({fastf1_parsing._logger.name})
 
     def __init__(self) -> None:
         super().__init__(logging.DEBUG)

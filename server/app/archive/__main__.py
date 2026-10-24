@@ -61,7 +61,7 @@ from app.archive.archive import open_archive
 from app.archive.export import IncompleteLoadError, export_circuit, export_schedule, export_session
 from app.archive.models import StoredSchedule
 from app.config import Settings
-from app.fastf1_loader import install_request_timeouts
+from app.fastf1_loader import install_request_timeouts, warn_if_no_f1_account
 from app.schedule.services import CircuitInfoUnavailable, fastf1_season, get_event, get_schedule
 
 logger = logging.getLogger("uvicorn.error")
@@ -147,8 +147,9 @@ def main(argv: list[str] | None = None) -> int:
     if archive is None:
         parser.error("no archive configured: run through `infisical run --`, or set R2_BUCKET (and its credentials) or ARCHIVE_LOCAL_DIR")
     os.makedirs(settings.fastf1_cache_dir, exist_ok=True)
-    fastf1.Cache.enable_cache(settings.fastf1_cache_dir)
+    fastf1.Cache.configure(cache_dir=settings.fastf1_cache_dir)
     install_request_timeouts(settings.upstream_connect_timeout_seconds, settings.upstream_read_timeout_seconds)
+    warn_if_no_f1_account()
     # FastF1 logs every cache read at INFO; keep the export progress readable.
     # Only its console output is quieted: the export reads FastF1's DEBUG
     # records to notice parts that failed to load.

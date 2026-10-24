@@ -7,7 +7,7 @@ requires-python = ">=3.14"
 dependencies = [
     "boto3>=1.43.112",
     "fastapi[standard]>=0.135.3",
-    "fastf1>=3.8.2",
+    "fastf1>=3.9.0",
     "pydantic-settings>=2.13.1",
     "requests>=2.33.1",
 ]

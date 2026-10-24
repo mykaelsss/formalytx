@@ -20,7 +20,7 @@ from app.archive.models import (
 )
 from app.utils import ExpiringLRU, KeyLockRegistry, format_lap_time, format_seconds, parse_event_id, resolve_session
 
-from app.fastf1_loader import locked_load
+from app.fastf1_loader import SessionDataUnavailable, locked_load
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -442,9 +442,15 @@ def _build_event_circuit_info(year: int, event_id: str) -> dict:
     if archive is not None:
         archived = archive.sessions(year, event_id, identifiers)
         identifiers = [identifier for identifier in identifiers if archived[identifier] is None]
+    unavailable = None
     for identifier in identifiers:
         session = resolve_session(year, event_id, identifier)
-        locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
+        try:
+            locked_load(session, year, event_id, identifier, laps=True, telemetry=True, weather=False, messages=False)
+        except SessionDataUnavailable as exc:
+            logger.info("No circuit info for %s %s from %s: %s", year, event_id, identifier, exc)
+            unavailable = exc
+            continue
         try:
             return build_circuit_info(session)
         except NoCircuitLayout:
@@ -452,6 +458,9 @@ def _build_event_circuit_info(year: int, event_id: str) -> dict:
         except (CircuitInfoUnavailable, DataNotLoadedError) as exc:
             # DataNotLoadedError: FastF1 loaded nothing of the session at all.
             logger.info("No circuit info for %s %s from %s: %s", year, event_id, identifier, exc)
+    if unavailable is not None:
+        # A session that loaded nothing may have its data later.
+        raise unavailable
     raise CircuitInfoUnavailable(f"No finished session of {year} {event_id} has circuit info")
 
 class CircuitInfoUnavailable(Exception):
